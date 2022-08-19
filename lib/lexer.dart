@@ -6,18 +6,12 @@ List<NaturalToken> lex(
 ) {
   final lexer = _Lexer._(source);
   final tokens = <NaturalToken>[];
-  do {
+  for (;;) {
     tokens.add(lexer.scanToken());
-  } while (tokens.last.type != TokenType.EOF);
-  if (lexer.traceScanner) {
-    int line = -1;
-    for (final token in tokens) {
-      if (token.loc.line != line) {
-        line = token.loc.line;
-      }
+    if (tokens.last.type == TokenType.EOF) {
+      return tokens;
     }
   }
-  return tokens;
 }
 
 class _Lexer {
@@ -28,7 +22,6 @@ class _Lexer {
 
   // Mark line as comment
   bool commentLine = false;
-  bool traceScanner = false;
 
   _Lexer._(this.source);
 
