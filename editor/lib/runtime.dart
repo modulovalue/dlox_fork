@@ -2,9 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:dlox/compiler.dart';
-import 'package:dlox/error.dart';
-import 'package:dlox/scanner.dart';
-import 'package:dlox/vm.dart';
+import 'package:dlox/lexer.dart';
 import 'package:flutter/material.dart';
 
 class Runtime extends ChangeNotifier {
@@ -99,9 +97,8 @@ class Runtime extends ChangeNotifier {
     compilerOut.clear();
     clearOutput();
     // Compile
-    final tokens = Scanner.scan(source);
     compilerResult = Compiler.compile(
-      tokens,
+      lex(source),
       silent: true,
       traceBytecode: true,
     );
@@ -131,7 +128,7 @@ class Runtime extends ChangeNotifier {
 
   void _onInterpreterResult() {
     _populateBuffer(stdout, vm.stdout.clear());
-    _populateBuffer(vmOut, vm.traceDebug.clear());
+    _populateBuffer(vmOut, vm.trace_debug.clear());
     _processErrors(interpreterResult?.errors);
     onInterpreterResult(interpreterResult);
     notifyListeners();

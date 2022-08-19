@@ -12,3 +12,4 @@ craftinginterpreters/
 examples/
 *.out
 *.exe
+.idea/

@@ -1,8 +1,6 @@
 import 'package:editor/lox_mode.dart';
 import 'package:editor/runtime.dart';
 import 'package:dlox/compiler.dart';
-import 'package:dlox/error.dart';
-import 'package:dlox/vm.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_highlight/themes/monokai-sublime.dart';

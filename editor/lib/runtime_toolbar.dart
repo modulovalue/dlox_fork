@@ -11,14 +11,20 @@ class RuntimeToolbar extends StatefulWidget {
   final Layout layout;
   final Function onClear;
 
-  const RuntimeToolbar({Key key, this.layout, this.onClear}) : super(key: key);
+  const RuntimeToolbar({
+    Key key,
+    this.layout,
+    this.onClear,
+  }) : super(key: key);
 
   @override
   _RuntimeToolbarState createState() => _RuntimeToolbarState();
 }
 
 class _RuntimeToolbarState extends State<RuntimeToolbar> {
-  Widget buildRunBtn(BuildContext context) {
+  Widget buildRunBtn(
+    BuildContext context,
+  ) {
     final runtime = context.watch<Runtime>();
     final running = runtime.running;
     final isDone = runtime.done;

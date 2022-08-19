@@ -1,3 +1,10 @@
+This is a fork of dlox.
+
+The purpose of this repo is to provide a test suite for generated lexers.
+
+---
+Original README:
+
 # dlox
 
 A full-featured VM written in dart
@@ -67,7 +74,7 @@ var c = ceil(abs(round(-theta)));
 
 - Controlled execution
 
-> Pause on each line, and limit the number of instructions per run for asyncronous execution
+> Pause on each line, and limit the number of instructions per run for asynchronous execution
 
 ## Using the CLI
 

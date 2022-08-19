@@ -1,5 +1,5 @@
 import 'package:dlox/main.dart' as shell;
 
-void main(List<String> arguments) {
+void main(final List<String> arguments) {
   shell.main(arguments);
 }
