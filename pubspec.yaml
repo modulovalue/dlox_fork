@@ -4,7 +4,7 @@ description: A sample command-line application.
 environment:
   sdk: '>=2.16.0 <3.0.0'
 
-dev_dependencies:
+dependencies:
   extra_pedantic: ^3.0.0
   sprintf: ^6.0.0
   test:
