@@ -6,6 +6,7 @@ import 'compiler.dart';
 import 'model.dart';
 
 // TODO have fixtures for the lexer in the style of esprima.
+// TODO have a benchmark suite that exposes just files.
 abstract class DLoxTestSuite {
   static void run<R>({
     required final DLoxTestSuiteDependencies deps,
