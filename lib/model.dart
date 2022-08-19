@@ -68,14 +68,12 @@ enum TokenType {
   ERROR,
   COMMENT,
   EOF,
-  ELIF,
-  NLINE,
 }
 
 abstract class Loc {
-  int get i;
+  int get line;
 
-  int get j;
+  int get line_token_counter;
 }
 
 class SyntheticTokenImpl implements SyntheticToken {
@@ -92,10 +90,10 @@ class SyntheticTokenImpl implements SyntheticToken {
   @override
   bool operator ==(final Object other) =>
       identical(this, other) ||
-          other is SyntheticTokenImpl &&
-              runtimeType == other.runtimeType &&
-              type == other.type &&
-              str == other.str;
+      other is SyntheticTokenImpl &&
+          runtimeType == other.runtimeType &&
+          type == other.type &&
+          str == other.str;
 
   @override
   int get hashCode => type.hashCode ^ str.hashCode;
@@ -105,14 +103,14 @@ class NaturalTokenImpl implements NaturalToken {
   @override
   final TokenType type;
   @override
-  final String? str;
+  final String str;
   @override
   final Loc loc;
 
   const NaturalTokenImpl({
     required final this.type,
-    this.str,
-    this.loc = const LocImpl(-1, -1),
+    required final this.str,
+    required final this.loc,
   });
 
   String get info {
@@ -123,14 +121,21 @@ class NaturalTokenImpl implements NaturalToken {
   String toString() {
     if (!_TOKEN_REPR.containsKey(type)) {
       throw Exception('Representation not found: $type');
+    } else {
+      if (type == TokenType.EOF) {
+        return '';
+      } else if (type == TokenType.NUMBER || type == TokenType.STRING || type == TokenType.IDENTIFIER) {
+        return str;
+      } else {
+        return _TOKEN_REPR[type]!;
+      }
     }
-    if (type == TokenType.EOF) return '';
-    if (type == TokenType.NUMBER || type == TokenType.STRING || type == TokenType.IDENTIFIER) return str!;
-    return _TOKEN_REPR[type]!;
   }
 
   @override
-  bool operator ==(final Object o) => o is NaturalToken && o.type == type && o.loc == loc && o.str == str;
+  bool operator ==(
+    final Object o,
+  ) => o is NaturalToken && o.type == type && o.loc == loc && o.str == str;
 
   @override
   int get hashCode => type.hashCode ^ loc.hashCode ^ str.hashCode;
@@ -195,43 +200,36 @@ class NaturalTokenImpl implements NaturalToken {
 
     // Editor syntactic sugar (dummy tokens)
     TokenType.COMMENT: '<//>',
-    TokenType.ELIF: 'elif',
     TokenType.EOF: 'eof',
-    TokenType.NLINE: 'nline',
     TokenType.ERROR: '<error>',
   };
 }
 
 class LocImpl implements Loc {
   @override
-  final int i;
+  final int line;
   @override
-  final int j;
+  final int line_token_counter;
 
-  const LocImpl(this.i, this.j);
-
-  Loc get right => LocImpl(i, j + 1);
-
-  Loc get left => LocImpl(i, j - 1);
-
-  Loc get top => LocImpl(i - 1, 0);
-
-  Loc get bottom => LocImpl(i + 1, 0);
-
-  bool after(final Loc other) {
-    return i > other.i || (i == other.i && j > other.j);
-  }
+  const LocImpl(
+    final this.line,
+    final this.line_token_counter,
+  );
 
   @override
   String toString() {
-    return '$i:$j';
+    return '$line:$line_token_counter';
   }
 
   @override
-  bool operator ==(final Object other) {
-    return (other is Loc) && other.i == i && other.j == j;
+  bool operator ==(
+    final Object other,
+  ) {
+    return (other is Loc) && other.line == line && other.line_token_counter == line_token_counter;
   }
 
   @override
-  int get hashCode => i.hashCode ^ j.hashCode;
+  int get hashCode {
+    return line.hashCode ^ line_token_counter.hashCode;
+  }
 }

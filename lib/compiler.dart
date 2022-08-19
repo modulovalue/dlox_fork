@@ -483,10 +483,6 @@ class Compiler {
         throw Exception("Unreachable");
       case TokenType.EOF:
         throw Exception("Unreachable");
-      case TokenType.ELIF:
-        throw Exception("Unreachable");
-      case TokenType.NLINE:
-        throw Exception("Unreachable");
     }
   }
 
@@ -1739,7 +1735,7 @@ class LangError {
   String toString() {
     final buf = StringBuffer();
     if (token != null) {
-      buf.write('[${token!.loc.i + 1}:${token!.loc.j}] $type error');
+      buf.write('[${token!.loc.line + 1}:${token!.loc.line_token_counter}] $type error');
       if (token!.type == TokenType.EOF) {
         buf.write(' at end');
       } else if (token!.type == TokenType.ERROR) {
@@ -1759,7 +1755,7 @@ class LangError {
 
 class CompilerError extends LangError {
   CompilerError(final NaturalToken token, final String? msg)
-      : super('Compile', msg, token: token, line: token.loc.i);
+      : super('Compile', msg, token: token, line: token.loc.line);
 }
 
 class RuntimeError extends LangError {
@@ -2048,7 +2044,7 @@ class Chunk {
 
   void write(final int byte, final NaturalToken token) {
     code.add(byte);
-    lines.add(token.loc.i);
+    lines.add(token.loc.line);
   }
 
   int addConstant(final Object? value) {

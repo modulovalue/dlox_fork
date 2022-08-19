@@ -12,8 +12,8 @@ List<NaturalToken> lex(
   if (lexer.traceScanner) {
     int line = -1;
     for (final token in tokens) {
-      if (token.loc.i != line) {
-        line = token.loc.i;
+      if (token.loc.line != line) {
+        line = token.loc.line;
       }
     }
   }
@@ -45,7 +45,7 @@ class _Lexer {
   }
 
   void newLine() {
-    loc = LocImpl(loc.i + 1, 0);
+    loc = LocImpl(loc.line + 1, 0);
     commentLine = false;
   }
 
@@ -83,7 +83,7 @@ class _Lexer {
     var str = source.substring(start, current);
     if (type == TokenType.STRING) str = str.substring(1, str.length - 1);
     final token = NaturalTokenImpl(type: type, loc: loc, str: str);
-    loc = LocImpl(loc.i, loc.j + 1);
+    loc = LocImpl(loc.line, loc.line_token_counter + 1);
     return token;
   }
 
@@ -213,13 +213,18 @@ class _Lexer {
 
   NaturalToken string() {
     while (peek != '"' && !isAtEnd) {
-      if (peek == '\n') newLine();
+      if (peek == '\n') {
+        newLine();
+      }
       advance();
     }
-    if (isAtEnd) return errorToken('Unterminated string.');
-    // The closing quote.
-    advance();
-    return makeToken(TokenType.STRING);
+    if (isAtEnd) {
+      return errorToken('Unterminated string.');
+    } else {
+      // The closing quote.
+      advance();
+      return makeToken(TokenType.STRING);
+    }
   }
 
   NaturalToken comment() {

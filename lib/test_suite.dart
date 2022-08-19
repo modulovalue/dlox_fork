@@ -49,7 +49,7 @@ abstract class DLoxTestSuite {
                   return '$line:$msg';
                 }).toSet();
                 Set<String> errList =
-                    compilerResult.errors.map((final e) => '${e.token!.loc.i}:${e.msg}').toSet();
+                    compilerResult.errors.map((final e) => '${e.token!.loc.line}:${e.msg}').toSet();
                 wrapper.run_test("test", (final test_context) {
                   if (set_eq(errRef, errList)) {
                     if (errList.isEmpty) {
@@ -87,7 +87,7 @@ abstract class DLoxTestSuite {
                             [
                               '$tab stdout mismatch',
                               '$tab -> expected: $stdoutRef',
-                              '$tab -> got: $stdout',
+                              '$tab -> got     : $stdout',
                             ].join("\n"),
                           );
                         } else {
@@ -98,7 +98,7 @@ abstract class DLoxTestSuite {
                           [
                             '$tab Runtime error mismatch',
                             '$tab -> expected: $errRef',
-                            '$tab -> got: $errList',
+                            '$tab -> got     : $errList',
                           ].join("\n"),
                         );
                       }
@@ -157,7 +157,10 @@ class DLoxTestSuiteDependencies {
 }
 
 class DLoxTestSuiteWrapper {
-  final void Function(String name, void Function() fn) run_group;
+  final void Function(
+    String name,
+    void Function() fn,
+  ) run_group;
   final void Function(
     String name,
     void Function(DLoxTestSuiteContext) test_context,
