@@ -24,7 +24,7 @@ class _Lexer {
   String source;
   int start = 0;
   int current = 0;
-  Loc loc = const LocImpl(0, 0);
+  Loc loc = const LocImpl(0);
 
   // Mark line as comment
   bool commentLine = false;
@@ -45,7 +45,7 @@ class _Lexer {
   }
 
   void newLine() {
-    loc = LocImpl(loc.line + 1, 0);
+    loc = LocImpl(loc.line + 1);
     commentLine = false;
   }
 
@@ -83,7 +83,7 @@ class _Lexer {
     var str = source.substring(start, current);
     if (type == TokenType.STRING) str = str.substring(1, str.length - 1);
     final token = NaturalTokenImpl(type: type, loc: loc, str: str);
-    loc = LocImpl(loc.line, loc.line_token_counter + 1);
+    loc = LocImpl(loc.line);
     return token;
   }
 
@@ -228,8 +228,16 @@ class _Lexer {
   }
 
   NaturalToken comment() {
-    while (peek != ' ' && peek != '\n' && !isAtEnd) {
-      advance();
+    for (;;) {
+      if (peek != "\n") {
+        if (isAtEnd) {
+          break;
+        } else {
+          advance();
+        }
+      } else {
+        break;
+      }
     }
     return makeToken(TokenType.COMMENT);
   }

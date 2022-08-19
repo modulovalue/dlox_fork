@@ -10,7 +10,7 @@ void main() async {
       lexer: lex,
       dlox_lib_path: (await Isolate.resolvePackageUri(Uri.parse("package:dlox/")))!,
     ),
-    wrapper: DLoxTestSuiteWrapper(
+    wrapper: DLoxTestSuiteWrapper<void>(
       run_group: (final name, final fn) => group(
         name,
         () => fn(),

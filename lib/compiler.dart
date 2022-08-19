@@ -1735,7 +1735,7 @@ class LangError {
   String toString() {
     final buf = StringBuffer();
     if (token != null) {
-      buf.write('[${token!.loc.line + 1}:${token!.loc.line_token_counter}] $type error');
+      buf.write('[${token!.loc.line + 1}] $type error');
       if (token!.type == TokenType.EOF) {
         buf.write(' at end');
       } else if (token!.type == TokenType.ERROR) {

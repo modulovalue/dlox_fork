@@ -7,9 +7,9 @@ import 'model.dart';
 
 // TODO have fixtures for the lexer in the style of esprima.
 abstract class DLoxTestSuite {
-  static void run({
+  static void run<R>({
     required final DLoxTestSuiteDependencies deps,
-    required final DLoxTestSuiteWrapper wrapper,
+    required final DLoxTestSuiteWrapper<R> wrapper,
   }) {
     final vm = VM(
       silent: true,
@@ -83,7 +83,7 @@ abstract class DLoxTestSuite {
                             .where((final str) => str.isNotEmpty)
                             .toList();
                         if (!list_eq(stdoutRef, stdout)) {
-                          test_context.failed(
+                          return test_context.failed(
                             [
                               '$tab stdout mismatch',
                               '$tab -> expected: $stdoutRef',
@@ -91,10 +91,10 @@ abstract class DLoxTestSuite {
                             ].join("\n"),
                           );
                         } else {
-                          test_context.success();
+                          return test_context.success();
                         }
                       } else {
-                        test_context.failed(
+                        return test_context.failed(
                           [
                             '$tab Runtime error mismatch',
                             '$tab -> expected: $errRef',
@@ -102,9 +102,11 @@ abstract class DLoxTestSuite {
                           ].join("\n"),
                         );
                       }
+                    } else {
+                      return test_context.success();
                     }
                   } else {
-                    test_context.failed(
+                    return test_context.failed(
                       [
                         '$tab Compile error mismatch',
                         '$tab -> expected: $errRef',
@@ -156,14 +158,14 @@ class DLoxTestSuiteDependencies {
   });
 }
 
-class DLoxTestSuiteWrapper {
+class DLoxTestSuiteWrapper<R> {
   final void Function(
     String name,
     void Function() fn,
   ) run_group;
   final void Function(
     String name,
-    void Function(DLoxTestSuiteContext) test_context,
+    R Function(DLoxTestSuiteContext<R>) test_context,
   ) run_test;
 
   const DLoxTestSuiteWrapper({
@@ -172,9 +174,9 @@ class DLoxTestSuiteWrapper {
   });
 }
 
-class DLoxTestSuiteContext {
-  final void Function(String) failed;
-  final void Function() success;
+class DLoxTestSuiteContext<R> {
+  final R Function(String) failed;
+  final R Function() success;
 
   const DLoxTestSuiteContext({
     required final this.failed,

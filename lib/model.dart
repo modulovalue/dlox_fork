@@ -70,10 +70,9 @@ enum TokenType {
   EOF,
 }
 
+// TODO migrate to store an absolute offset and no line information.
 abstract class Loc {
   int get line;
-
-  int get line_token_counter;
 }
 
 class SyntheticTokenImpl implements SyntheticToken {
@@ -208,28 +207,25 @@ class NaturalTokenImpl implements NaturalToken {
 class LocImpl implements Loc {
   @override
   final int line;
-  @override
-  final int line_token_counter;
 
   const LocImpl(
     final this.line,
-    final this.line_token_counter,
   );
 
   @override
   String toString() {
-    return '$line:$line_token_counter';
+    return '$line';
   }
 
   @override
   bool operator ==(
     final Object other,
   ) {
-    return (other is Loc) && other.line == line && other.line_token_counter == line_token_counter;
+    return (other is Loc) && other.line == line;
   }
 
   @override
   int get hashCode {
-    return line.hashCode ^ line_token_counter.hashCode;
+    return line.hashCode;
   }
 }
