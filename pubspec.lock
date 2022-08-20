@@ -65,7 +65,7 @@ packages:
     source: hosted
     version: "3.0.2"
   extra_pedantic:
-    dependency: "direct main"
+    dependency: "direct dev"
     description:
       name: extra_pedantic
       url: "https://pub.dartlang.org"
@@ -268,7 +268,7 @@ packages:
     source: hosted
     version: "1.2.1"
   test:
-    dependency: "direct main"
+    dependency: "direct dev"
     description:
       name: test
       url: "https://pub.dartlang.org"
