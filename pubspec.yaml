@@ -2,12 +2,12 @@ name: dlox
 description: A sample command-line application.
 
 environment:
-  sdk: '>=2.16.0 <3.0.0'
+  sdk: '>=2.15.0-0 <3.0.0'
 
 dependencies:
   # TODO remove sprintf
   sprintf: ^6.0.0
 
 dev_dependencies:
-  extra_pedantic: ^3.0.0
+  extra_pedantic: ^2.0.0
   test:

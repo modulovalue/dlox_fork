@@ -4,12 +4,16 @@ import 'model.dart';
 List<NaturalToken> lex(
   final String source,
 ) {
-  final lexer = _Lexer._(source);
+  final lexer = _Lexer._(
+    source: source,
+  );
   final tokens = <NaturalToken>[];
   for (;;) {
     tokens.add(lexer.scanToken());
     if (tokens.last.type == TokenType.EOF) {
       return tokens;
+    } else {
+      // Continue.
     }
   }
 }
@@ -23,7 +27,9 @@ class _Lexer {
   // Mark line as comment
   bool commentLine = false;
 
-  _Lexer._(this.source);
+  _Lexer._({
+    required final this.source,
+  });
 
   static bool isDigit(final String? c) {
     if (c == null) return false;

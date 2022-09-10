@@ -3,13 +3,1554 @@ import 'dart:math';
 
 import 'package:sprintf/sprintf.dart';
 
+import 'ast.dart';
 import 'model.dart';
 
 // region compiler
-// TODO: Optimisation - bump
+CompilerResult compile(
+  final List<NaturalToken> tokens, {
+  final bool silent = false,
+  final bool traceBytecode = false,
+}) {
+  // Compile script
+  final parser = Parser(
+    tokens,
+    silent: silent,
+  );
+  final compiler = Compiler(
+    FunctionType.SCRIPT,
+    parser: parser,
+    debug_trace_bytecode: traceBytecode,
+  );
+  parser.advance();
+  while (!compiler.match(TokenType.EOF)) {
+    compiler.declaration();
+  }
+  final function = compiler.end_compiler();
+  return CompilerResult(
+    function,
+    parser.errors,
+    parser.debug,
+  );
+}
+
+// TODO move parsing logic into the parser
+// TODO convert ast to bytecode as a separate step
+class Compiler with CompilerMixin {
+  @override
+  final Parser parser;
+  @override
+  final FunctionType type;
+  @override
+  int scope_depth;
+  @override
+  bool debug_trace_bytecode;
+  @override
+  ClassCompiler? current_class;
+  @override
+  ObjFunction? function;
+
+  @override
+  Compiler? get enclosing => null;
+
+  Compiler(
+    final this.type, {
+    required final this.parser,
+    final this.debug_trace_bytecode = false,
+  }) : scope_depth = 0, function = ObjFunction() {
+    switch(type) {
+      case FunctionType.FUNCTION:
+        function!.name = this.parser.previous!.str;
+        locals.add(Local(const SyntheticTokenImpl(type: TokenType.FUN, str: ''), depth: 0));
+        break;
+      case FunctionType.INITIALIZER:
+        function!.name = this.parser.previous!.str;
+        locals.add(Local(const SyntheticTokenImpl(type: TokenType.FUN, str: 'this'), depth: 0));
+        break;
+      case FunctionType.METHOD:
+        function!.name = this.parser.previous!.str;
+        locals.add(Local(const SyntheticTokenImpl(type: TokenType.FUN, str: 'this'), depth: 0));
+        break;
+      case FunctionType.SCRIPT:
+        locals.add(Local(const SyntheticTokenImpl(type: TokenType.FUN, str: 'this'), depth: 0));
+        break;
+    }
+  }
+}
+
+class CompilerWrapped with CompilerMixin {
+  @override
+  final Parser parser;
+  @override
+  final FunctionType type;
+  @override
+  final CompilerMixin enclosing;
+  @override
+  int scope_depth;
+  @override
+  bool debug_trace_bytecode;
+  @override
+  ClassCompiler? current_class;
+  @override
+  ObjFunction? function;
+
+  CompilerWrapped(
+    final this.type, {
+    required final this.enclosing,
+  })  : function = ObjFunction(),
+        parser = enclosing.parser,
+        current_class = enclosing.current_class,
+        scope_depth = enclosing.scope_depth + 1,
+        debug_trace_bytecode = enclosing.debug_trace_bytecode {
+    if (type != FunctionType.SCRIPT) {
+      function!.name = this.parser.previous!.str;
+    }
+    locals.add(
+      Local(
+        SyntheticTokenImpl(
+          type: TokenType.FUN,
+          str: () {
+            if (type != FunctionType.FUNCTION) {
+              return 'this';
+            } else {
+              return '';
+            }
+          }(),
+        ),
+        depth: 0,
+      ),
+    );
+  }
+}
+
+mixin CompilerMixin {
+  final List<Local> locals = [];
+  final List<Upvalue> upvalues = [];
+  abstract int scope_depth;
+  abstract ClassCompiler? current_class;
+  abstract ObjFunction? function;
+
+  // TODO I can't move the parsing routines into the parser
+  // TODO  because compilation happens during parsing.
+  Parser get parser;
+
+  FunctionType get type;
+
+  CompilerMixin? get enclosing;
+
+  bool get debug_trace_bytecode;
+
+  ObjFunction? end_compiler() {
+    emit_return();
+    if (parser.errors.isEmpty && debug_trace_bytecode) {
+      parser.debug.disassembleChunk(current_chunk, function!.name ?? '<script>');
+    }
+    return function;
+  }
+
+  Chunk get current_chunk {
+    return function!.chunk;
+  }
+
+  void consume(
+    final TokenType type,
+    final String message,
+  ) {
+    parser.consume(type, message);
+  }
+
+  bool match(
+    final TokenType type,
+  ) {
+    return parser.match(type);
+  }
+
+  void emit_op(
+    final OpCode op,
+  ) {
+    emit_byte(op.index);
+  }
+
+  void emit_byte(
+    final int byte,
+  ) {
+    current_chunk.write(byte, parser.previous!);
+  }
+
+  void emit_bytes(
+    final int byte1,
+    final int byte2,
+  ) {
+    emit_byte(byte1);
+    emit_byte(byte2);
+  }
+
+  void emit_loop(
+    final int loopStart,
+  ) {
+    emit_op(OpCode.LOOP);
+    final offset = current_chunk.count - loopStart + 2;
+    if (offset > UINT16_MAX) parser.error('Loop body too large');
+    emit_byte((offset >> 8) & 0xff);
+    emit_byte(offset & 0xff);
+  }
+
+  int emit_jump(
+    final OpCode instruction,
+  ) {
+    emit_op(instruction);
+    emit_byte(0xff);
+    emit_byte(0xff);
+    return current_chunk.count - 2;
+  }
+
+  void emit_return() {
+    if (type == FunctionType.INITIALIZER) {
+      emit_bytes(OpCode.GET_LOCAL.index, 0);
+    } else {
+      emit_op(OpCode.NIL);
+    }
+    emit_op(OpCode.RETURN);
+  }
+
+  int make_constant(
+    final Object? value,
+  ) {
+    final constant = current_chunk.addConstant(value);
+    if (constant > UINT8_MAX) {
+      parser.error('Too many constants in one chunk');
+      return 0;
+    } else {
+      return constant;
+    }
+  }
+
+  void emit_constant(
+    final Object? value,
+  ) {
+    emit_bytes(OpCode.CONSTANT.index, make_constant(value));
+  }
+
+  void patch_jump(
+    final int offset,
+  ) {
+    // -2 to adjust for the bytecode for the jump offset itself.
+    final jump = current_chunk.count - offset - 2;
+    if (jump > UINT16_MAX) {
+      parser.error('Too much code to jump over');
+    }
+    current_chunk.code[offset] = (jump >> 8) & 0xff;
+    current_chunk.code[offset + 1] = jump & 0xff;
+  }
+
+  int identifier_constant(
+    final SyntheticToken name,
+  ) {
+    return make_constant(name.str);
+  }
+
+  bool identifiers_equal(
+    final SyntheticToken a,
+    final SyntheticToken b,
+  ) {
+    return a.str == b.str;
+  }
+
+  int resolve_local(
+    final SyntheticToken? name,
+  ) {
+    for (int i = locals.length - 1; i >= 0; i--) {
+      final local = locals[i];
+      if (identifiers_equal(name!, local.name!)) {
+        if (!local.initialized) {
+          parser.error('Can\'t read local variable in its own initializer');
+        }
+        return i;
+      } else {
+        continue;
+      }
+    }
+    return -1;
+  }
+
+  int add_upvalue(
+    final SyntheticToken? name,
+    final int index,
+    final bool is_local,
+  ) {
+    assert(upvalues.length == function!.upvalueCount, "");
+    for (var i = 0; i < upvalues.length; i++) {
+      final upvalue = upvalues[i];
+      if (upvalue.index == index && upvalue.isLocal == is_local) {
+        return i;
+      }
+    }
+    if (upvalues.length == UINT8_COUNT) {
+      parser.error('Too many closure variables in function');
+      return 0;
+    }
+    upvalues.add(Upvalue(name, index, is_local));
+    return function!.upvalueCount++;
+  }
+
+  int resolve_upvalue(
+    final SyntheticToken? name,
+  ) {
+    if (enclosing == null) {
+      return -1;
+    } else {
+      final localIdx = enclosing!.resolve_local(name);
+      if (localIdx != -1) {
+        final local = enclosing!.locals[localIdx];
+        local.isCaptured = true;
+        return add_upvalue(local.name, localIdx, true);
+      } else {
+        final upvalueIdx = enclosing!.resolve_upvalue(name);
+        if (upvalueIdx != -1) {
+          final upvalue = enclosing!.upvalues[upvalueIdx];
+          return add_upvalue(upvalue.name, upvalueIdx, false);
+        } else {
+          return -1;
+        }
+      }
+    }
+  }
+
+  void add_local(
+    final SyntheticToken? name,
+  ) {
+    if (locals.length >= UINT8_COUNT) {
+      parser.error('Too many local variables in function');
+      return;
+    }
+    locals.add(Local(name));
+  }
+
+  void delare_local_variable() {
+    // Global variables are implicitly declared.
+    if (scope_depth == 0) {
+      return;
+    } else {
+      final name = parser.previous;
+      for (var i = locals.length - 1; i >= 0; i--) {
+        final local = locals[i];
+        if (local.depth != -1 && local.depth < scope_depth) {
+          break; // [negative]
+        }
+        if (identifiers_equal(name!, local.name!)) {
+          parser.error('Already variable with this name in this scope');
+        }
+      }
+      add_local(name);
+    }
+  }
+
+  int parse_variable(
+    final String error_message,
+  ) {
+    consume(TokenType.IDENTIFIER, error_message);
+    if (scope_depth > 0) {
+      delare_local_variable();
+      return 0;
+    } else {
+      return identifier_constant(parser.previous!);
+    }
+  }
+
+  void mark_local_variable_initialized() {
+    if (scope_depth == 0) return;
+    locals.last.depth = scope_depth;
+  }
+
+  void define_variable(
+    final int global, {
+    final NaturalToken? token,
+    final int peekDist = 0,
+  }) {
+    final isLocal = scope_depth > 0;
+    if (isLocal) {
+      mark_local_variable_initialized();
+    } else {
+      emit_bytes(OpCode.DEFINE_GLOBAL.index, global);
+    }
+  }
+
+  int argument_list() {
+    var argCount = 0;
+    if (!parser.check(TokenType.RIGHT_PAREN)) {
+      do {
+        expression();
+        if (argCount == 255) {
+          parser.error("Can't have more than 255 arguments");
+        }
+        argCount++;
+      } while (match(TokenType.COMMA));
+    }
+    consume(TokenType.RIGHT_PAREN, "Expect ')' after arguments");
+    return argCount;
+  }
+
+  void call(
+    final bool canAssign,
+  ) {
+    final arg_count = argument_list();
+    emit_bytes(OpCode.CALL.index, arg_count);
+  }
+
+  void get_or_set_variable(
+    final SyntheticToken? name,
+    final bool canAssign,
+  ) {
+    bool matchPair(
+      final TokenType first,
+      final TokenType second,
+    ) {
+      return parser.matchPair(first, second);
+    }
+
+    int arg = resolve_local(name);
+    OpCode get_op;
+    OpCode set_op;
+    if (arg != -1) {
+      get_op = OpCode.GET_LOCAL;
+      set_op = OpCode.SET_LOCAL;
+    } else if ((arg = resolve_upvalue(name)) != -1) {
+      get_op = OpCode.GET_UPVALUE;
+      set_op = OpCode.SET_UPVALUE;
+    } else {
+      arg = identifier_constant(name!);
+      get_op = OpCode.GET_GLOBAL;
+      set_op = OpCode.SET_GLOBAL;
+    }
+    // Special mathematical assignment
+    final assign_op = () {
+      if (canAssign) {
+        if (matchPair(TokenType.PLUS, TokenType.EQUAL)) {
+          return OpCode.ADD;
+        } else if (matchPair(TokenType.MINUS, TokenType.EQUAL)) {
+          return OpCode.SUBTRACT;
+        } else if (matchPair(TokenType.STAR, TokenType.EQUAL)) {
+          return OpCode.MULTIPLY;
+        } else if (matchPair(TokenType.SLASH, TokenType.EQUAL)) {
+          return OpCode.DIVIDE;
+        } else if (matchPair(TokenType.PERCENT, TokenType.EQUAL)) {
+          return OpCode.MOD;
+        } else if (matchPair(TokenType.CARET, TokenType.EQUAL)) {
+          return OpCode.POW;
+        } else {
+          return null;
+        }
+      } else {
+        return null;
+      }
+    }();
+    if (canAssign && (assign_op != null || match(TokenType.EQUAL))) {
+      if (assign_op != null) emit_bytes(get_op.index, arg);
+      expression();
+      if (assign_op != null) emit_op(assign_op);
+      emit_bytes(set_op.index, arg);
+    } else {
+      emit_bytes(get_op.index, arg);
+    }
+  }
+
+  SyntheticTokenImpl synthetic_token(
+    final String str,
+  ) {
+    return SyntheticTokenImpl(
+      type: TokenType.IDENTIFIER,
+      str: str,
+    );
+  }
+
+  void parse_precedence(
+    final Precedence precedence,
+  ) {
+    Precedence get_precedence(
+      final TokenType type,
+    ) {
+      switch (type) {
+        case TokenType.LEFT_PAREN:
+          return Precedence.CALL;
+        case TokenType.RIGHT_PAREN:
+          return Precedence.NONE;
+        case TokenType.LEFT_BRACE:
+          return Precedence.NONE;
+        case TokenType.RIGHT_BRACE:
+          return Precedence.NONE;
+        case TokenType.LEFT_BRACK:
+          return Precedence.CALL;
+        case TokenType.RIGHT_BRACK:
+          return Precedence.NONE;
+        case TokenType.COMMA:
+          return Precedence.NONE;
+        case TokenType.DOT:
+          return Precedence.CALL;
+        case TokenType.MINUS:
+          return Precedence.TERM;
+        case TokenType.PLUS:
+          return Precedence.TERM;
+        case TokenType.SEMICOLON:
+          return Precedence.NONE;
+        case TokenType.SLASH:
+          return Precedence.FACTOR;
+        case TokenType.STAR:
+          return Precedence.FACTOR;
+        case TokenType.CARET:
+          return Precedence.POWER;
+        case TokenType.PERCENT:
+          return Precedence.FACTOR;
+        case TokenType.COLON:
+          return Precedence.NONE;
+        case TokenType.BANG:
+          return Precedence.NONE;
+        case TokenType.BANG_EQUAL:
+          return Precedence.EQUALITY;
+        case TokenType.EQUAL:
+          return Precedence.NONE;
+        case TokenType.EQUAL_EQUAL:
+          return Precedence.EQUALITY;
+        case TokenType.GREATER:
+          return Precedence.COMPARISON;
+        case TokenType.GREATER_EQUAL:
+          return Precedence.COMPARISON;
+        case TokenType.LESS:
+          return Precedence.COMPARISON;
+        case TokenType.LESS_EQUAL:
+          return Precedence.COMPARISON;
+        case TokenType.IDENTIFIER:
+          return Precedence.NONE;
+        case TokenType.STRING:
+          return Precedence.NONE;
+        case TokenType.NUMBER:
+          return Precedence.NONE;
+        case TokenType.OBJECT:
+          return Precedence.NONE;
+        case TokenType.AND:
+          return Precedence.AND;
+        case TokenType.CLASS:
+          return Precedence.NONE;
+        case TokenType.ELSE:
+          return Precedence.NONE;
+        case TokenType.FALSE:
+          return Precedence.NONE;
+        case TokenType.FOR:
+          return Precedence.NONE;
+        case TokenType.FUN:
+          return Precedence.NONE;
+        case TokenType.IF:
+          return Precedence.NONE;
+        case TokenType.NIL:
+          return Precedence.NONE;
+        case TokenType.OR:
+          return Precedence.OR;
+        case TokenType.PRINT:
+          return Precedence.NONE;
+        case TokenType.RETURN:
+          return Precedence.NONE;
+        case TokenType.SUPER:
+          return Precedence.NONE;
+        case TokenType.THIS:
+          return Precedence.NONE;
+        case TokenType.TRUE:
+          return Precedence.NONE;
+        case TokenType.VAR:
+          return Precedence.NONE;
+        case TokenType.WHILE:
+          return Precedence.NONE;
+        case TokenType.BREAK:
+          return Precedence.NONE;
+        case TokenType.CONTINUE:
+          return Precedence.NONE;
+        case TokenType.ERROR:
+          return Precedence.NONE;
+        case TokenType.EOF:
+          return Precedence.NONE;
+        case TokenType.IN:
+          return Precedence.NONE;
+        case TokenType.COMMENT:
+          return Precedence.NONE;
+      }
+    }
+
+    void Function(bool can_assign)? get_prefix_rule(
+      final TokenType type,
+    ) {
+      switch (type) {
+        case TokenType.LEFT_PAREN:
+          return (final bool canAssign) {
+            expression();
+            consume(TokenType.RIGHT_PAREN, "Expect ')' after expression");
+          };
+        case TokenType.RIGHT_PAREN:
+          return null;
+        case TokenType.LEFT_BRACE:
+          return (final bool canAssign) {
+            var valCount = 0;
+            if (!parser.check(TokenType.RIGHT_BRACE)) {
+              do {
+                expression();
+                consume(TokenType.COLON, "Expect ':' between map key-value pairs");
+                expression();
+                valCount++;
+              } while (match(TokenType.COMMA));
+            }
+            consume(TokenType.RIGHT_BRACE, "Expect '}' after map initializer");
+            emit_bytes(OpCode.MAP_INIT.index, valCount);
+          };
+        case TokenType.RIGHT_BRACE:
+          return null;
+        case TokenType.LEFT_BRACK:
+          return (final bool canAssign) {
+            var valCount = 0;
+            if (!parser.check(TokenType.RIGHT_BRACK)) {
+              expression();
+              valCount += 1;
+              if (parser.match(TokenType.COLON)) {
+                expression();
+                valCount = -1;
+              } else {
+                while (match(TokenType.COMMA)) {
+                  expression();
+                  valCount++;
+                }
+              }
+            }
+            consume(TokenType.RIGHT_BRACK, "Expect ']' after list initializer");
+            if (valCount >= 0) {
+              emit_bytes(OpCode.LIST_INIT.index, valCount);
+            } else {
+              emit_byte(OpCode.LIST_INIT_RANGE.index);
+            }
+          };
+        case TokenType.RIGHT_BRACK:
+          return null;
+        case TokenType.COMMA:
+          return null;
+        case TokenType.DOT:
+          return null;
+        case TokenType.MINUS:
+          return (final a) {
+            parse_precedence(Precedence.UNARY);
+            emit_op(OpCode.NEGATE);
+          };
+        case TokenType.PLUS:
+          return null;
+        case TokenType.SEMICOLON:
+          return null;
+        case TokenType.SLASH:
+          return null;
+        case TokenType.STAR:
+          return null;
+        case TokenType.CARET:
+          return null;
+        case TokenType.PERCENT:
+          return null;
+        case TokenType.COLON:
+          return null;
+        case TokenType.BANG:
+          return (final a) {
+            parse_precedence(Precedence.UNARY);
+            emit_op(OpCode.NOT);
+          };
+        case TokenType.BANG_EQUAL:
+          return null;
+        case TokenType.EQUAL:
+          return null;
+        case TokenType.EQUAL_EQUAL:
+          return null;
+        case TokenType.GREATER:
+          return null;
+        case TokenType.GREATER_EQUAL:
+          return null;
+        case TokenType.LESS:
+          return null;
+        case TokenType.LESS_EQUAL:
+          return null;
+        case TokenType.IDENTIFIER:
+          return (final bool canAssign) => get_or_set_variable(parser.previous, canAssign);
+        case TokenType.STRING:
+          // string
+          return (final bool canAssign) {
+            final str = parser.previous!.str;
+            emit_constant(str);
+          };
+        case TokenType.NUMBER:
+          // number
+          return (final bool canAssign) {
+            final value = double.tryParse(parser.previous!.str!);
+            if (value == null) {
+              parser.error('Invalid number');
+            } else {
+              emit_constant(value);
+            }
+          };
+        case TokenType.OBJECT:
+          // object
+          return (final bool canAssign) {
+            emit_constant(null);
+          };
+        case TokenType.AND:
+          // and
+          return null;
+        case TokenType.CLASS:
+          return null;
+        case TokenType.ELSE:
+          return null;
+        case TokenType.FALSE:
+          return (final a) => emit_op(OpCode.FALSE);
+        case TokenType.FOR:
+          return null;
+        case TokenType.FUN:
+          return null;
+        case TokenType.IF:
+          return null;
+        case TokenType.NIL:
+          return (final a) => emit_op(OpCode.NIL);
+        case TokenType.OR:
+          // or
+          return null;
+        case TokenType.PRINT:
+          return null;
+        case TokenType.RETURN:
+          return null;
+        case TokenType.SUPER:
+          // super
+          return (final bool canAssign) {
+            if (current_class == null) {
+              parser.error("Can't use 'super' outside of a class");
+            } else if (!current_class!.hasSuperclass) {
+              parser.error("Can't use 'super' in a class with no superclass");
+            }
+            consume(TokenType.DOT, "Expect '.' after 'super'");
+            consume(TokenType.IDENTIFIER, 'Expect superclass method name');
+            final name = identifier_constant(parser.previous!);
+            get_or_set_variable(synthetic_token('this'), false);
+            if (match(TokenType.LEFT_PAREN)) {
+              final argCount = argument_list();
+              get_or_set_variable(synthetic_token('super'), false);
+              emit_bytes(OpCode.SUPER_INVOKE.index, name);
+              emit_byte(argCount);
+            } else {
+              get_or_set_variable(synthetic_token('super'), false);
+              emit_bytes(OpCode.GET_SUPER.index, name);
+            }
+          };
+        case TokenType.THIS:
+          // this
+          return (final bool canAssign) {
+            if (current_class == null) {
+              parser.error("Can't use 'this' outside of a class");
+              return;
+            }
+            get_or_set_variable(parser.previous, false);
+          };
+        case TokenType.TRUE:
+          return (final a) => emit_op(OpCode.TRUE);
+        case TokenType.VAR:
+          return null;
+        case TokenType.WHILE:
+          return null;
+        case TokenType.BREAK:
+          return null;
+        case TokenType.CONTINUE:
+          return null;
+        case TokenType.ERROR:
+          return null;
+        case TokenType.EOF:
+          return null;
+        // ignore: no_default_cases
+        default:
+          return null;
+      }
+    }
+
+    void Function(bool can_assign)? get_infix_rule(
+      final TokenType type,
+    ) {
+      void parse_binary(
+        final bool can_assign,
+      ) {
+        final operatorType = parser.previous!.type;
+        final rule = get_precedence(operatorType);
+        parse_precedence(Precedence.values[rule.index + 1]);
+        // Emit the operator instruction.
+        switch (operatorType) {
+          case TokenType.BANG_EQUAL:
+            emit_bytes(OpCode.EQUAL.index, OpCode.NOT.index);
+            break;
+          case TokenType.EQUAL_EQUAL:
+            emit_op(OpCode.EQUAL);
+            break;
+          case TokenType.GREATER:
+            emit_op(OpCode.GREATER);
+            break;
+          case TokenType.GREATER_EQUAL:
+            emit_bytes(OpCode.LESS.index, OpCode.NOT.index);
+            break;
+          case TokenType.LESS:
+            emit_op(OpCode.LESS);
+            break;
+          case TokenType.LESS_EQUAL:
+            emit_bytes(OpCode.GREATER.index, OpCode.NOT.index);
+            break;
+          case TokenType.PLUS:
+            emit_op(OpCode.ADD);
+            break;
+          case TokenType.MINUS:
+            emit_op(OpCode.SUBTRACT);
+            break;
+          case TokenType.STAR:
+            emit_op(OpCode.MULTIPLY);
+            break;
+          case TokenType.SLASH:
+            emit_op(OpCode.DIVIDE);
+            break;
+          case TokenType.CARET:
+            emit_op(OpCode.POW);
+            break;
+          case TokenType.PERCENT:
+            emit_op(OpCode.MOD);
+            break;
+          case TokenType.LEFT_PAREN:
+            throw Exception("Unreachable");
+          case TokenType.RIGHT_PAREN:
+            throw Exception("Unreachable");
+          case TokenType.LEFT_BRACE:
+            throw Exception("Unreachable");
+          case TokenType.RIGHT_BRACE:
+            throw Exception("Unreachable");
+          case TokenType.LEFT_BRACK:
+            throw Exception("Unreachable");
+          case TokenType.RIGHT_BRACK:
+            throw Exception("Unreachable");
+          case TokenType.COMMA:
+            throw Exception("Unreachable");
+          case TokenType.DOT:
+            throw Exception("Unreachable");
+          case TokenType.SEMICOLON:
+            throw Exception("Unreachable");
+          case TokenType.COLON:
+            throw Exception("Unreachable");
+          case TokenType.BANG:
+            throw Exception("Unreachable");
+          case TokenType.EQUAL:
+            throw Exception("Unreachable");
+          case TokenType.IDENTIFIER:
+            throw Exception("Unreachable");
+          case TokenType.STRING:
+            throw Exception("Unreachable");
+          case TokenType.NUMBER:
+            throw Exception("Unreachable");
+          case TokenType.OBJECT:
+            throw Exception("Unreachable");
+          case TokenType.AND:
+            throw Exception("Unreachable");
+          case TokenType.CLASS:
+            throw Exception("Unreachable");
+          case TokenType.ELSE:
+            throw Exception("Unreachable");
+          case TokenType.FALSE:
+            throw Exception("Unreachable");
+          case TokenType.FOR:
+            throw Exception("Unreachable");
+          case TokenType.FUN:
+            throw Exception("Unreachable");
+          case TokenType.IF:
+            throw Exception("Unreachable");
+          case TokenType.NIL:
+            throw Exception("Unreachable");
+          case TokenType.OR:
+            throw Exception("Unreachable");
+          case TokenType.PRINT:
+            throw Exception("Unreachable");
+          case TokenType.RETURN:
+            throw Exception("Unreachable");
+          case TokenType.SUPER:
+            throw Exception("Unreachable");
+          case TokenType.THIS:
+            throw Exception("Unreachable");
+          case TokenType.TRUE:
+            throw Exception("Unreachable");
+          case TokenType.VAR:
+            throw Exception("Unreachable");
+          case TokenType.WHILE:
+            throw Exception("Unreachable");
+          case TokenType.IN:
+            throw Exception("Unreachable");
+          case TokenType.BREAK:
+            throw Exception("Unreachable");
+          case TokenType.CONTINUE:
+            throw Exception("Unreachable");
+          case TokenType.ERROR:
+            throw Exception("Unreachable");
+          case TokenType.COMMENT:
+            throw Exception("Unreachable");
+          case TokenType.EOF:
+            throw Exception("Unreachable");
+        }
+      }
+
+      switch (type) {
+        case TokenType.LEFT_PAREN:
+          // grouping
+          return call;
+        case TokenType.RIGHT_PAREN:
+          return null;
+        case TokenType.LEFT_BRACE:
+          // map init
+          return null;
+        case TokenType.RIGHT_BRACE:
+          return null;
+        case TokenType.LEFT_BRACK:
+          // list index
+          return (final bool canAssign) {
+            var getRange = match(TokenType.COLON);
+            // Left hand side operand
+            if (getRange) {
+              emit_constant(Nil);
+            } else {
+              expression();
+              getRange = match(TokenType.COLON);
+            }
+            // Right hand side operand
+            if (match(TokenType.RIGHT_BRACK)) {
+              if (getRange) emit_constant(Nil);
+            } else {
+              if (getRange) expression();
+              consume(TokenType.RIGHT_BRACK, "Expect ']' after list indexing");
+            }
+            // Emit operation
+            if (getRange) {
+              emit_op(OpCode.CONTAINER_GET_RANGE);
+            } else if (canAssign && match(TokenType.EQUAL)) {
+              expression();
+              emit_op(OpCode.CONTAINER_SET);
+            } else {
+              emit_op(OpCode.CONTAINER_GET);
+            }
+          };
+        case TokenType.RIGHT_BRACK:
+          return null;
+        case TokenType.COMMA:
+          return null;
+        case TokenType.DOT:
+          // dot
+          return (final bool canAssign) {
+            consume(TokenType.IDENTIFIER, "Expect property name after '.'");
+            final name = identifier_constant(parser.previous!);
+            if (canAssign && match(TokenType.EQUAL)) {
+              expression();
+              emit_bytes(OpCode.SET_PROPERTY.index, name);
+            } else if (match(TokenType.LEFT_PAREN)) {
+              final argCount = argument_list();
+              emit_bytes(OpCode.INVOKE.index, name);
+              emit_byte(argCount);
+            } else {
+              emit_bytes(OpCode.GET_PROPERTY.index, name);
+            }
+          };
+        case TokenType.MINUS:
+          return parse_binary;
+        case TokenType.PLUS:
+          return parse_binary;
+        case TokenType.SEMICOLON:
+          return null;
+        case TokenType.SLASH:
+          return parse_binary;
+        case TokenType.STAR:
+          return parse_binary;
+        case TokenType.CARET:
+          return parse_binary;
+        case TokenType.PERCENT:
+          return parse_binary;
+        case TokenType.COLON:
+          return null;
+        case TokenType.BANG:
+          return null;
+        case TokenType.BANG_EQUAL:
+          return parse_binary;
+        case TokenType.EQUAL:
+          return null;
+        case TokenType.EQUAL_EQUAL:
+          return parse_binary;
+        case TokenType.GREATER:
+          return parse_binary;
+        case TokenType.GREATER_EQUAL:
+          return parse_binary;
+        case TokenType.LESS:
+          return parse_binary;
+        case TokenType.LESS_EQUAL:
+          return parse_binary;
+        case TokenType.IDENTIFIER:
+          return null;
+        case TokenType.STRING:
+          return null;
+        case TokenType.NUMBER:
+          return null;
+        case TokenType.OBJECT:
+          return null;
+        case TokenType.AND:
+          return (final bool canAssign) {
+            final endJump = emit_jump(OpCode.JUMP_IF_FALSE);
+            emit_op(OpCode.POP);
+            parse_precedence(Precedence.AND);
+            patch_jump(endJump);
+          };
+        case TokenType.CLASS:
+          return null;
+        case TokenType.ELSE:
+          return null;
+        case TokenType.FALSE:
+          return null;
+        case TokenType.FOR:
+          return null;
+        case TokenType.FUN:
+          return null;
+        case TokenType.IF:
+          return null;
+        case TokenType.NIL:
+          return null;
+        case TokenType.OR:
+          return (final bool canAssign) {
+            final elseJump = emit_jump(OpCode.JUMP_IF_FALSE);
+            final endJump = emit_jump(OpCode.JUMP);
+            patch_jump(elseJump);
+            emit_op(OpCode.POP);
+            parse_precedence(Precedence.OR);
+            patch_jump(endJump);
+          };
+        case TokenType.PRINT:
+          return null;
+        case TokenType.RETURN:
+          return null;
+        case TokenType.SUPER:
+          return null;
+        case TokenType.THIS:
+          return null;
+        case TokenType.TRUE:
+          return null;
+        case TokenType.VAR:
+          return null;
+        case TokenType.WHILE:
+          return null;
+        case TokenType.BREAK:
+          return null;
+        case TokenType.CONTINUE:
+          return null;
+        case TokenType.ERROR:
+          return null;
+        case TokenType.EOF:
+          return null;
+        // ignore: no_default_cases
+        default:
+          return null;
+      }
+    }
+
+    parser.advance();
+    final prefix_rule = get_prefix_rule(parser.previous!.type);
+    if (prefix_rule == null) {
+      parser.error('Expect expression');
+    } else {
+      final can_assign = precedence.index <= Precedence.ASSIGNMENT.index;
+      prefix_rule(can_assign);
+      while (precedence.index <= get_precedence(parser.current!.type).index) {
+        parser.advance();
+        final infix_rule = get_infix_rule(parser.previous!.type);
+        if (infix_rule != null) {
+          infix_rule(can_assign);
+        } else {
+          throw Exception("Invalid State");
+        }
+      }
+      if (can_assign && match(TokenType.EQUAL)) {
+        parser.error('Invalid assignment target');
+      }
+    }
+  }
+
+  Expr expression() {
+    parse_precedence(Precedence.ASSIGNMENT);
+    return Expr();
+  }
+
+  Block block() {
+    final decls = <Declaration>[];
+    while (!parser.check(TokenType.RIGHT_BRACE) && !parser.check(TokenType.EOF)) {
+      decls.add(declaration());
+    }
+    consume(TokenType.RIGHT_BRACE, 'Unterminated block');
+    return Block(
+      decls: decls,
+    );
+  }
+
+  Declaration declaration() {
+    void begin_scope() {
+      scope_depth++;
+    }
+
+    void end_scope() {
+      scope_depth--;
+      while (locals.isNotEmpty && locals.last.depth > scope_depth) {
+        if (locals.last.isCaptured) {
+          emit_op(OpCode.CLOSE_UPVALUE);
+        } else {
+          emit_op(OpCode.POP);
+        }
+        locals.removeLast();
+      }
+    }
+
+    DeclarationVari var_declaration() {
+      do {
+        final global = parse_variable('Expect variable name');
+        final token = parser.previous;
+        if (match(TokenType.EQUAL)) {
+          expression();
+        } else {
+          emit_op(OpCode.NIL);
+        }
+        define_variable(global, token: token);
+      } while (match(TokenType.COMMA));
+      consume(TokenType.SEMICOLON, 'Expect a newline after variable declaration');
+      return const DeclarationVari();
+    }
+
+    Stmt statement() {
+      Expr expressionStatement() {
+        final expr = expression();
+        consume(TokenType.SEMICOLON, 'Expect a newline after expression');
+        emit_op(OpCode.POP);
+        return expr;
+      }
+
+      if (match(TokenType.PRINT)) {
+        // print statement
+        expression();
+        consume(TokenType.SEMICOLON, 'Expect a newline after value');
+        emit_op(OpCode.PRINT);
+        return const StmtOutput();
+      } else if (match(TokenType.FOR)) {
+        // for statement check
+        if (match(TokenType.LEFT_PAREN)) {
+          // legacy for statement
+          // Deprecated
+          begin_scope();
+          // consume(TokenType.LEFT_PAREN, "Expect '(' after 'for'");
+          if (match(TokenType.SEMICOLON)) {
+            // No initializer.
+          } else if (match(TokenType.VAR)) {
+            var_declaration();
+          } else {
+            expressionStatement();
+          }
+          var loopStart = current_chunk.count;
+          var exitJump = -1;
+          if (!match(TokenType.SEMICOLON)) {
+            expression();
+            consume(TokenType.SEMICOLON, "Expect ';' after loop condition");
+            exitJump = emit_jump(OpCode.JUMP_IF_FALSE);
+            emit_op(OpCode.POP); // Condition.
+          }
+          if (!match(TokenType.RIGHT_PAREN)) {
+            final bodyJump = emit_jump(OpCode.JUMP);
+            final incrementStart = current_chunk.count;
+            expression();
+            emit_op(OpCode.POP);
+            consume(TokenType.RIGHT_PAREN, "Expect ')' after for clauses");
+            emit_loop(loopStart);
+            loopStart = incrementStart;
+            patch_jump(bodyJump);
+          }
+          statement();
+          emit_loop(loopStart);
+          if (exitJump != -1) {
+            patch_jump(exitJump);
+            emit_op(OpCode.POP); // Condition.
+          }
+          end_scope();
+        } else {
+          // for statement
+          begin_scope();
+          // Key variable
+          parse_variable('Expect variable name'); // Streamline those operations
+          emit_op(OpCode.NIL);
+          define_variable(0, token: parser.previous); // Remove 0
+          final stackIdx = locals.length - 1;
+          if (match(TokenType.COMMA)) {
+            // Value variable
+            parse_variable('Expect variable name');
+            emit_op(OpCode.NIL);
+            define_variable(0, token: parser.previous);
+          } else {
+            // Create dummy value slot
+            add_local(synthetic_token('_for_val_'));
+            emit_constant(0); // Emit a zero to permute val & key
+            mark_local_variable_initialized();
+          }
+          // Now add two dummy local variables. Idx & entries
+          add_local(synthetic_token('_for_idx_'));
+          emit_op(OpCode.NIL);
+          mark_local_variable_initialized();
+          add_local(synthetic_token('_for_iterable_'));
+          emit_op(OpCode.NIL);
+          mark_local_variable_initialized();
+          // Rest of the loop
+          consume(TokenType.IN, "Expect 'in' after loop variables");
+          expression(); // Iterable
+          // Iterator
+          final loopStart = current_chunk.count;
+          emit_bytes(OpCode.CONTAINER_ITERATE.index, stackIdx);
+          final exitJump = emit_jump(OpCode.JUMP_IF_FALSE);
+          emit_op(OpCode.POP); // Condition
+          // Body
+          statement();
+          emit_loop(loopStart);
+          // Exit
+          patch_jump(exitJump);
+          emit_op(OpCode.POP); // Condition
+          end_scope();
+        }
+        return const StmtLoop();
+      } else if (match(TokenType.IF)) {
+        // if statement
+        // consume(TokenType.LEFT_PAREN, "Expect '(' after 'if'");
+        expression();
+        // consume(TokenType.RIGHT_PAREN, "Expect ')' after condition"); // [paren]
+        final thenJump = emit_jump(OpCode.JUMP_IF_FALSE);
+        emit_op(OpCode.POP);
+        statement();
+        final elseJump = emit_jump(OpCode.JUMP);
+        patch_jump(thenJump);
+        emit_op(OpCode.POP);
+        if (match(TokenType.ELSE)) statement();
+        patch_jump(elseJump);
+        return const StmtConditional();
+      } else if (match(TokenType.RETURN)) {
+        // return statement
+        // if (type == FunctionType.SCRIPT) {
+        //   parser.error("Can't return from top-level code");
+        // }
+        if (match(TokenType.SEMICOLON)) {
+          emit_return();
+        } else {
+          if (type == FunctionType.INITIALIZER) {
+            parser.error("Can't return a value from an initializer");
+          }
+          expression();
+          consume(TokenType.SEMICOLON, 'Expect a newline after return value');
+          emit_op(OpCode.RETURN);
+        }
+        return const StmtRet();
+      } else if (match(TokenType.WHILE)) {
+        final loopStart = current_chunk.count;
+        // consume(TokenType.LEFT_PAREN, "Expect '(' after 'while'");
+        expression();
+        // consume(TokenType.RIGHT_PAREN, "Expect ')' after condition");
+        final exitJump = emit_jump(OpCode.JUMP_IF_FALSE);
+        emit_op(OpCode.POP);
+        statement();
+        emit_loop(loopStart);
+        patch_jump(exitJump);
+        emit_op(OpCode.POP);
+        return const StmtWhil();
+      } else if (match(TokenType.LEFT_BRACE)) {
+        begin_scope();
+        block();
+        end_scope();
+        return const StmtBlock();
+      } else {
+        return StmtExpr(
+          expr: expressionStatement(),
+        );
+      }
+    }
+
+    Block function_block(
+      final FunctionType type,
+    ) {
+      final compiler = CompilerWrapped(type, enclosing: this);
+      // beginScope(); // [no-end-scope]
+      // not needed because of wrapped compiler scope propagation
+
+      // Compile the parameter list.
+      // final functionToken = parser.previous;
+      compiler.consume(TokenType.LEFT_PAREN, "Expect '(' after function name");
+      final args = <NaturalToken?>[];
+      if (!compiler.parser.check(TokenType.RIGHT_PAREN)) {
+        do {
+          compiler.function!.arity++;
+          if (compiler.function!.arity > 255) {
+            compiler.parser.errorAtCurrent("Can't have more than 255 parameters");
+          }
+          compiler.parse_variable('Expect parameter name');
+          compiler.mark_local_variable_initialized();
+          args.add(compiler.parser.previous);
+        } while (compiler.match(TokenType.COMMA));
+      }
+      for (var k = 0; k < args.length; k++) {
+        compiler.define_variable(0, token: args[k], peekDist: args.length - 1 - k);
+      }
+      compiler.consume(TokenType.RIGHT_PAREN, "Expect ')' after parameters");
+      // The body.
+      compiler.consume(TokenType.LEFT_BRACE, 'Expect function body');
+      final block = compiler.block();
+      // Create the function object.
+      final function = compiler.end_compiler();
+      emit_bytes(OpCode.CLOSURE.index, make_constant(function));
+      for (var i = 0; i < compiler.upvalues.length; i++) {
+        emit_byte(compiler.upvalues[i].isLocal ? 1 : 0);
+        emit_byte(compiler.upvalues[i].index);
+      }
+      return block;
+    }
+
+    final Declaration decl = () {
+      if (match(TokenType.CLASS)) {
+        // class declaration
+        consume(TokenType.IDENTIFIER, 'Expect class name');
+        final className = parser.previous;
+        final nameConstant = identifier_constant(parser.previous!);
+        delare_local_variable();
+        emit_bytes(OpCode.CLASS.index, nameConstant);
+        define_variable(nameConstant);
+        final classCompiler = ClassCompiler(current_class, parser.previous, false);
+        current_class = classCompiler;
+        if (match(TokenType.LESS)) {
+          consume(TokenType.IDENTIFIER, 'Expect superclass name');
+          get_or_set_variable(parser.previous, false);
+          if (identifiers_equal(className!, parser.previous!)) {
+            parser.error("A class can't inherit from itself");
+          }
+          begin_scope();
+          add_local(synthetic_token('super'));
+          define_variable(0);
+          get_or_set_variable(className, false);
+          emit_op(OpCode.INHERIT);
+          classCompiler.hasSuperclass = true;
+        }
+        get_or_set_variable(className, false);
+        consume(TokenType.LEFT_BRACE, 'Expect class body');
+        while (!parser.check(TokenType.RIGHT_BRACE) && !parser.check(TokenType.EOF)) {
+          // parse method
+          consume(TokenType.IDENTIFIER, 'Expect method name');
+          final identifier = parser.previous!;
+          final constant = identifier_constant(identifier);
+          var type = FunctionType.METHOD;
+          if (identifier.str == 'init') {
+            type = FunctionType.INITIALIZER;
+          }
+          function_block(type);
+          emit_bytes(OpCode.METHOD.index, constant);
+        }
+        consume(TokenType.RIGHT_BRACE, 'Unterminated class body');
+        emit_op(OpCode.POP);
+        if (classCompiler.hasSuperclass) {
+          end_scope();
+        }
+        current_class = current_class!.enclosing;
+        return const DeclarationClazz();
+      } else if (match(TokenType.FUN)) {
+        // fun declaration
+        final global = parse_variable('Expect function name');
+        final token = parser.previous!;
+        mark_local_variable_initialized();
+        final block = function_block(FunctionType.FUNCTION);
+        define_variable(global, token: token);
+        return DeclarationFun(
+          block: block,
+          name: token,
+        );
+      } else if (match(TokenType.VAR)) {
+        return var_declaration();
+      } else {
+        return DeclarationStmt(
+          stmt: statement(),
+        );
+      }
+    }();
+    if (parser.panic_mode) {
+      // synchronize
+      parser.panic_mode = false;
+      outer:
+      while (parser.current!.type != TokenType.EOF) {
+        if (parser.previous!.type == TokenType.SEMICOLON) {
+          break outer;
+        } else {
+          switch (parser.current!.type) {
+            case TokenType.CLASS:
+            case TokenType.FUN:
+            case TokenType.VAR:
+            case TokenType.FOR:
+            case TokenType.IF:
+            case TokenType.WHILE:
+            case TokenType.PRINT:
+            case TokenType.RETURN:
+              break outer;
+            // ignore: no_default_cases
+            default:
+            // Do nothing.
+          }
+          parser.advance();
+        }
+      }
+    }
+    return decl;
+  }
+}
+
 const UINT8_COUNT = 256;
 const UINT8_MAX = UINT8_COUNT - 1;
 const UINT16_MAX = 65535;
+
+class Local {
+  final SyntheticToken? name;
+  int depth;
+  bool isCaptured = false;
+
+  Local(
+      final this.name, {
+        final this.depth = -1,
+        final this.isCaptured = false,
+      });
+
+  bool get initialized {
+    return depth >= 0;
+  }
+}
+
+class Upvalue {
+  final SyntheticToken? name;
+  final int index;
+  final bool isLocal;
+
+  const Upvalue(
+      final this.name,
+      final this.index,
+      final this.isLocal,
+      );
+}
+
+enum FunctionType {
+  FUNCTION,
+  INITIALIZER,
+  METHOD,
+  SCRIPT,
+}
+
+class ClassCompiler {
+  final ClassCompiler? enclosing;
+  final NaturalToken? name;
+  bool hasSuperclass;
+
+  ClassCompiler(
+      final this.enclosing,
+      final this.name,
+      final this.hasSuperclass,
+      );
+}
+
+class CompilerResult {
+  final ObjFunction? function;
+  final List<CompilerError> errors;
+  final Debug? debug;
+
+  const CompilerResult(
+      final this.function,
+      final this.errors,
+      final this.debug,
+      );
+}
+// endregion
+
+// region parser
+class Parser {
+  final List<NaturalToken> tokens;
+  final List<CompilerError> errors;
+  final Debug debug;
+  NaturalToken? current;
+  NaturalToken? previous;
+  NaturalToken? second_previous;
+  int current_idx;
+  bool panic_mode;
+
+  Parser(
+    this.tokens, {
+    final bool silent = false,
+  })  : debug = Debug(silent),
+        errors = [],
+        current_idx = 0,
+        panic_mode = false;
+
+  void errorAt(
+    final NaturalToken? token,
+    final String? message,
+  ) {
+    if (panic_mode) {
+      return;
+    } else {
+      panic_mode = true;
+      final error = CompilerError(token!, message);
+      errors.add(error);
+      error.dump(debug);
+    }
+  }
+
+  void error(final String message) {
+    errorAt(previous, message);
+  }
+
+  void errorAtCurrent(final String? message) {
+    errorAt(current, message);
+  }
+
+  void advance() {
+    second_previous = previous; // TODO: is it needed?
+    previous = current;
+    while (current_idx < tokens.length) {
+      current = tokens[current_idx++];
+      // Skip invalid tokens
+      if (current!.type == TokenType.ERROR) {
+        errorAtCurrent(current!.str);
+      } else if (current!.type != TokenType.COMMENT) {
+        break;
+      }
+    }
+  }
+
+  void consume(final TokenType type, final String message) {
+    if (current!.type == type) {
+      advance();
+    } else {
+      errorAtCurrent(message);
+    }
+  }
+
+  bool check(final TokenType type) {
+    return current!.type == type;
+  }
+
+  bool matchPair(final TokenType first, final TokenType second) {
+    if (!check(first) || current_idx >= tokens.length || tokens[current_idx].type != second) {
+      return false;
+    } else {
+      advance();
+      advance();
+      return true;
+    }
+  }
+
+  bool match(final TokenType type) {
+    if (!check(type)) {
+      return false;
+    } else {
+      advance();
+      return true;
+    }
+  }
+}
 
 enum Precedence {
   NONE,
@@ -23,1182 +1564,12 @@ enum Precedence {
   POWER, // ^
   UNARY, // ! -
   CALL, // . ()
-  PRIMARY
-}
-
-typedef ParseFn = void Function(bool canAssign);
-
-class ParseRule {
-  final ParseFn? prefix;
-  final ParseFn? infix;
-  final Precedence precedence;
-
-  const ParseRule(this.prefix, this.infix, this.precedence);
-}
-
-class Local {
-  final SyntheticToken? name;
-  int depth;
-  bool isCaptured = false;
-
-  Local(this.name, {this.depth = -1, this.isCaptured = false});
-
-  bool get initialized {
-    return depth >= 0;
-  }
-}
-
-class Upvalue {
-  final SyntheticToken? name;
-  final int index;
-  final bool isLocal;
-
-  const Upvalue(this.name, this.index, this.isLocal);
-}
-
-enum FunctionType { FUNCTION, INITIALIZER, METHOD, SCRIPT }
-
-class ClassCompiler {
-  final ClassCompiler? enclosing;
-  final NaturalToken? name;
-  bool hasSuperclass;
-
-  ClassCompiler(this.enclosing, this.name, this.hasSuperclass);
-}
-
-class CompilerResult {
-  final ObjFunction? function;
-  final List<CompilerError> errors;
-  final Debug? debug;
-
-  const CompilerResult(this.function, this.errors, this.debug);
-}
-
-CompilerResult compile(
-  final List<NaturalToken> tokens, {
-  final bool silent = false,
-  final bool traceBytecode = false,
-}) {
-  // Compile script
-  final parser = Parser(tokens, silent: silent);
-  final compiler = Compiler._(
-    FunctionType.SCRIPT,
-    parser: parser,
-    traceBytecode: traceBytecode,
-  );
-  parser.advance();
-  while (!compiler.match(TokenType.EOF)) {
-    compiler.declaration();
-  }
-  final function = compiler.endCompiler();
-  return CompilerResult(
-    function,
-    parser.errors,
-    parser.debug,
-  );
-}
-
-// TODO have an ast
-// TODO move parsing logic into the parser
-// TODO interpret ast
-class Compiler {
-  final Compiler? enclosing;
-  final List<Local> locals = [];
-  final List<Upvalue> upvalues = [];
-
-  // TODO I can't move the parsing routines into the parser
-  // TODO  because compilation happens during parsing?
-  Parser? parser;
-  ClassCompiler? currentClass;
-  ObjFunction? function;
-  FunctionType type;
-  int scopeDepth = 0;
-
-  // Debug tracer
-  bool traceBytecode;
-
-  Compiler._(
-    this.type, {
-    this.parser,
-    this.enclosing,
-    this.traceBytecode = false,
-  }) {
-    function = ObjFunction();
-    if (enclosing != null) {
-      assert(parser == null, "");
-      parser = enclosing!.parser;
-      currentClass = enclosing!.currentClass;
-      scopeDepth = enclosing!.scopeDepth + 1;
-      traceBytecode = enclosing!.traceBytecode;
-    } else {
-      assert(parser != null, "");
-    }
-    if (type != FunctionType.SCRIPT) {
-      function!.name = parser!.previous!.str;
-    }
-    final str = type != FunctionType.FUNCTION ? 'this' : '';
-    final name = SyntheticTokenImpl(type: TokenType.FUN, str: str);
-    locals.add(Local(name, depth: 0));
-  }
-
-  ObjFunction? endCompiler() {
-    emitReturn();
-    if (parser!.errors.isEmpty && traceBytecode) {
-      parser!.debug!.disassembleChunk(currentChunk, function!.name ?? '<script>');
-    }
-    return function;
-  }
-
-  Chunk get currentChunk {
-    return function!.chunk;
-  }
-
-  void consume(final TokenType type, final String message) {
-    parser!.consume(type, message);
-  }
-
-  bool match(final TokenType type) {
-    final res = parser!.match(type);
-    return res;
-  }
-
-  void emitOp(final OpCode op) {
-    emitByte(op.index);
-  }
-
-  void emitByte(final int byte) {
-    currentChunk.write(byte, parser!.previous!);
-  }
-
-  void emitBytes(final int byte1, final int byte2) {
-    emitByte(byte1);
-    emitByte(byte2);
-  }
-
-  void emitLoop(final int loopStart) {
-    emitOp(OpCode.LOOP);
-    final offset = currentChunk.count - loopStart + 2;
-    if (offset > UINT16_MAX) parser!.error('Loop body too large');
-    emitByte((offset >> 8) & 0xff);
-    emitByte(offset & 0xff);
-  }
-
-  int emitJump(final OpCode instruction) {
-    emitOp(instruction);
-    emitByte(0xff);
-    emitByte(0xff);
-    return currentChunk.count - 2;
-  }
-
-  void emitReturn() {
-    if (type == FunctionType.INITIALIZER) {
-      emitBytes(OpCode.GET_LOCAL.index, 0);
-    } else {
-      emitOp(OpCode.NIL);
-    }
-    emitOp(OpCode.RETURN);
-  }
-
-  int makeConstant(final Object? value) {
-    final constant = currentChunk.addConstant(value);
-    if (constant > UINT8_MAX) {
-      parser!.error('Too many constants in one chunk');
-      return 0;
-    }
-    return constant;
-  }
-
-  void emitConstant(final Object? value) {
-    emitBytes(OpCode.CONSTANT.index, makeConstant(value));
-  }
-
-  void patchJump(final int offset) {
-    // -2 to adjust for the bytecode for the jump offset itself.
-    final jump = currentChunk.count - offset - 2;
-    if (jump > UINT16_MAX) {
-      parser!.error('Too much code to jump over');
-    }
-    currentChunk.code[offset] = (jump >> 8) & 0xff;
-    currentChunk.code[offset + 1] = jump & 0xff;
-  }
-
-  int identifierConstant(final SyntheticToken name) {
-    return makeConstant(name.str);
-  }
-
-  bool identifiersEqual(final SyntheticToken a, final SyntheticToken b) {
-    return a.str == b.str;
-  }
-
-  int resolveLocal(final SyntheticToken? name) {
-    for (var i = locals.length - 1; i >= 0; i--) {
-      final local = locals[i];
-      if (identifiersEqual(name!, local.name!)) {
-        if (!local.initialized) {
-          parser!.error('Can\'t read local variable in its own initializer');
-        }
-        return i;
-      }
-    }
-    return -1;
-  }
-
-  int addUpvalue(final SyntheticToken? name, final int index, final bool isLocal) {
-    assert(upvalues.length == function!.upvalueCount, "");
-    for (var i = 0; i < upvalues.length; i++) {
-      final upvalue = upvalues[i];
-      if (upvalue.index == index && upvalue.isLocal == isLocal) {
-        return i;
-      }
-    }
-    if (upvalues.length == UINT8_COUNT) {
-      parser!.error('Too many closure variables in function');
-      return 0;
-    }
-    upvalues.add(Upvalue(name, index, isLocal));
-    return function!.upvalueCount++;
-  }
-
-  int resolveUpvalue(final SyntheticToken? name) {
-    if (enclosing == null) return -1;
-    final localIdx = enclosing!.resolveLocal(name);
-    if (localIdx != -1) {
-      final local = enclosing!.locals[localIdx];
-      local.isCaptured = true;
-      return addUpvalue(local.name, localIdx, true);
-    }
-    final upvalueIdx = enclosing!.resolveUpvalue(name);
-    if (upvalueIdx != -1) {
-      final upvalue = enclosing!.upvalues[upvalueIdx];
-      return addUpvalue(upvalue.name, upvalueIdx, false);
-    }
-    return -1;
-  }
-
-  void addLocal(final SyntheticToken? name) {
-    if (locals.length >= UINT8_COUNT) {
-      parser!.error('Too many local variables in function');
-      return;
-    }
-    locals.add(Local(name));
-  }
-
-  void delareLocalVariable() {
-    // Global variables are implicitly declared.
-    if (scopeDepth == 0) return;
-    final name = parser!.previous;
-    for (var i = locals.length - 1; i >= 0; i--) {
-      final local = locals[i];
-      if (local.depth != -1 && local.depth < scopeDepth) {
-        break; // [negative]
-      }
-      if (identifiersEqual(name!, local.name!)) {
-        parser!.error('Already variable with this name in this scope');
-      }
-    }
-    addLocal(name);
-  }
-
-  int parseVariable(final String errorMessage) {
-    consume(TokenType.IDENTIFIER, errorMessage);
-    if (scopeDepth > 0) {
-      delareLocalVariable();
-      return 0;
-    } else {
-      return identifierConstant(parser!.previous!);
-    }
-  }
-
-  void markLocalVariableInitialized() {
-    if (scopeDepth == 0) return;
-    locals.last.depth = scopeDepth;
-  }
-
-  void defineVariable(final int global, {final NaturalToken? token, final int peekDist = 0}) {
-    final isLocal = scopeDepth > 0;
-    if (isLocal) {
-      markLocalVariableInitialized();
-    } else {
-      emitBytes(OpCode.DEFINE_GLOBAL.index, global);
-    }
-  }
-
-  int argumentList() {
-    var argCount = 0;
-    if (!parser!.check(TokenType.RIGHT_PAREN)) {
-      do {
-        expression();
-        if (argCount == 255) {
-          parser!.error("Can't have more than 255 arguments");
-        }
-        argCount++;
-      } while (match(TokenType.COMMA));
-    }
-    consume(TokenType.RIGHT_PAREN, "Expect ')' after arguments");
-    return argCount;
-  }
-
-  void call(final bool canAssign) {
-    final argCount = argumentList();
-    emitBytes(OpCode.CALL.index, argCount);
-  }
-
-  void getOrSetVariable(final SyntheticToken? name, final bool canAssign) {
-    bool matchPair(final TokenType first, final TokenType second) {
-      final res = parser!.matchPair(first, second);
-      return res;
-    }
-
-    OpCode getOp;
-    OpCode setOp;
-    var arg = resolveLocal(name);
-    if (arg != -1) {
-      getOp = OpCode.GET_LOCAL;
-      setOp = OpCode.SET_LOCAL;
-    } else if ((arg = resolveUpvalue(name)) != -1) {
-      getOp = OpCode.GET_UPVALUE;
-      setOp = OpCode.SET_UPVALUE;
-    } else {
-      arg = identifierConstant(name!);
-      getOp = OpCode.GET_GLOBAL;
-      setOp = OpCode.SET_GLOBAL;
-    }
-    // Special mathematical assignment
-    OpCode? assignOp;
-    if (canAssign) {
-      if (matchPair(TokenType.PLUS, TokenType.EQUAL)) {
-        assignOp = OpCode.ADD;
-      } else if (matchPair(TokenType.MINUS, TokenType.EQUAL)) {
-        assignOp = OpCode.SUBTRACT;
-      } else if (matchPair(TokenType.STAR, TokenType.EQUAL)) {
-        assignOp = OpCode.MULTIPLY;
-      } else if (matchPair(TokenType.SLASH, TokenType.EQUAL)) {
-        assignOp = OpCode.DIVIDE;
-      } else if (matchPair(TokenType.PERCENT, TokenType.EQUAL)) {
-        assignOp = OpCode.MOD;
-      } else if (matchPair(TokenType.CARET, TokenType.EQUAL)) {
-        assignOp = OpCode.POW;
-      }
-    }
-    if (canAssign && (assignOp != null || match(TokenType.EQUAL))) {
-      if (assignOp != null) emitBytes(getOp.index, arg);
-      expression();
-      if (assignOp != null) emitOp(assignOp);
-      emitBytes(setOp.index, arg);
-    } else {
-      emitBytes(getOp.index, arg);
-    }
-  }
-
-  SyntheticTokenImpl syntheticToken(final String str) {
-    return SyntheticTokenImpl(type: TokenType.IDENTIFIER, str: str);
-  }
-
-  void parsePrecedence(final Precedence precedence) {
-    parser!.advance();
-    final prefixRule = getRule(parser!.previous!.type)!.prefix;
-    if (prefixRule == null) {
-      parser!.error('Expect expression');
-      return;
-    } else {
-      final canAssign = precedence.index <= Precedence.ASSIGNMENT.index;
-      prefixRule(canAssign);
-      while (precedence.index <= getRule(parser!.current!.type)!.precedence.index) {
-        parser!.advance();
-        final infixRule = getRule(parser!.previous!.type)!.infix!;
-        infixRule(canAssign);
-      }
-      if (canAssign && match(TokenType.EQUAL)) {
-        parser!.error('Invalid assignment target');
-      }
-    }
-  }
-
-  ParseRule? getRule(final TokenType type) {
-    void unary(final bool canAssign) {
-      final operatorType = parser!.previous!.type;
-      parsePrecedence(Precedence.UNARY);
-      switch (operatorType) {
-        case TokenType.BANG:
-          emitOp(OpCode.NOT);
-          break;
-        case TokenType.MINUS:
-          emitOp(OpCode.NEGATE);
-          break;
-        // ignore: no_default_cases
-        default:
-          throw Exception("Unreachable");
-      }
-    }
-
-    void binary(final bool canAssign) {
-      final operatorType = parser!.previous!.type;
-      final rule = getRule(operatorType)!;
-      parsePrecedence(Precedence.values[rule.precedence.index + 1]);
-      // Emit the operator instruction.
-      switch (operatorType) {
-        case TokenType.BANG_EQUAL:
-          emitBytes(OpCode.EQUAL.index, OpCode.NOT.index);
-          break;
-        case TokenType.EQUAL_EQUAL:
-          emitOp(OpCode.EQUAL);
-          break;
-        case TokenType.GREATER:
-          emitOp(OpCode.GREATER);
-          break;
-        case TokenType.GREATER_EQUAL:
-          emitBytes(OpCode.LESS.index, OpCode.NOT.index);
-          break;
-        case TokenType.LESS:
-          emitOp(OpCode.LESS);
-          break;
-        case TokenType.LESS_EQUAL:
-          emitBytes(OpCode.GREATER.index, OpCode.NOT.index);
-          break;
-        case TokenType.PLUS:
-          emitOp(OpCode.ADD);
-          break;
-        case TokenType.MINUS:
-          emitOp(OpCode.SUBTRACT);
-          break;
-        case TokenType.STAR:
-          emitOp(OpCode.MULTIPLY);
-          break;
-        case TokenType.SLASH:
-          emitOp(OpCode.DIVIDE);
-          break;
-        case TokenType.CARET:
-          emitOp(OpCode.POW);
-          break;
-        case TokenType.PERCENT:
-          emitOp(OpCode.MOD);
-          break;
-        case TokenType.LEFT_PAREN:
-          throw Exception("Unreachable");
-        case TokenType.RIGHT_PAREN:
-          throw Exception("Unreachable");
-        case TokenType.LEFT_BRACE:
-          throw Exception("Unreachable");
-        case TokenType.RIGHT_BRACE:
-          throw Exception("Unreachable");
-        case TokenType.LEFT_BRACK:
-          throw Exception("Unreachable");
-        case TokenType.RIGHT_BRACK:
-          throw Exception("Unreachable");
-        case TokenType.COMMA:
-          throw Exception("Unreachable");
-        case TokenType.DOT:
-          throw Exception("Unreachable");
-        case TokenType.SEMICOLON:
-          throw Exception("Unreachable");
-        case TokenType.COLON:
-          throw Exception("Unreachable");
-        case TokenType.BANG:
-          throw Exception("Unreachable");
-        case TokenType.EQUAL:
-          throw Exception("Unreachable");
-        case TokenType.IDENTIFIER:
-          throw Exception("Unreachable");
-        case TokenType.STRING:
-          throw Exception("Unreachable");
-        case TokenType.NUMBER:
-          throw Exception("Unreachable");
-        case TokenType.OBJECT:
-          throw Exception("Unreachable");
-        case TokenType.AND:
-          throw Exception("Unreachable");
-        case TokenType.CLASS:
-          throw Exception("Unreachable");
-        case TokenType.ELSE:
-          throw Exception("Unreachable");
-        case TokenType.FALSE:
-          throw Exception("Unreachable");
-        case TokenType.FOR:
-          throw Exception("Unreachable");
-        case TokenType.FUN:
-          throw Exception("Unreachable");
-        case TokenType.IF:
-          throw Exception("Unreachable");
-        case TokenType.NIL:
-          throw Exception("Unreachable");
-        case TokenType.OR:
-          throw Exception("Unreachable");
-        case TokenType.PRINT:
-          throw Exception("Unreachable");
-        case TokenType.RETURN:
-          throw Exception("Unreachable");
-        case TokenType.SUPER:
-          throw Exception("Unreachable");
-        case TokenType.THIS:
-          throw Exception("Unreachable");
-        case TokenType.TRUE:
-          throw Exception("Unreachable");
-        case TokenType.VAR:
-          throw Exception("Unreachable");
-        case TokenType.WHILE:
-          throw Exception("Unreachable");
-        case TokenType.IN:
-          throw Exception("Unreachable");
-        case TokenType.BREAK:
-          throw Exception("Unreachable");
-        case TokenType.CONTINUE:
-          throw Exception("Unreachable");
-        case TokenType.ERROR:
-          throw Exception("Unreachable");
-        case TokenType.COMMENT:
-          throw Exception("Unreachable");
-        case TokenType.EOF:
-          throw Exception("Unreachable");
-      }
-    }
-
-    void literal(final bool canAssign) {
-      switch (parser!.previous!.type) {
-        case TokenType.NIL:
-          emitOp(OpCode.NIL);
-          break;
-        case TokenType.FALSE:
-          emitOp(OpCode.FALSE);
-          break;
-        case TokenType.TRUE:
-          emitOp(OpCode.TRUE);
-          break;
-        // ignore: no_default_cases
-        default:
-          throw Exception("Unreachable");
-      }
-    }
-
-    switch(type) {
-      case TokenType.LEFT_PAREN:
-        // grouping
-        return ParseRule((final bool canAssign) {
-          expression();
-          consume(TokenType.RIGHT_PAREN, "Expect ')' after expression");
-        }, call, Precedence.CALL,);
-      case TokenType.RIGHT_PAREN:
-        return const ParseRule(null, null, Precedence.NONE);
-      case TokenType.LEFT_BRACE:
-        // map init
-        return ParseRule((final bool canAssign) {
-          var valCount = 0;
-          if (!parser!.check(TokenType.RIGHT_BRACE)) {
-            do {
-              expression();
-              consume(TokenType.COLON, "Expect ':' between map key-value pairs");
-              expression();
-              valCount++;
-            } while (match(TokenType.COMMA));
-          }
-          consume(TokenType.RIGHT_BRACE, "Expect '}' after map initializer");
-          emitBytes(OpCode.MAP_INIT.index, valCount);
-        }, null, Precedence.NONE,);
-      case TokenType.RIGHT_BRACE:
-        return const ParseRule(null, null, Precedence.NONE);
-      case TokenType.LEFT_BRACK:
-        return ParseRule(
-          // list init
-          (final bool canAssign) {
-            var valCount = 0;
-            if (!parser!.check(TokenType.RIGHT_BRACK)) {
-              expression();
-              valCount += 1;
-              if (parser!.match(TokenType.COLON)) {
-                expression();
-                valCount = -1;
-              } else {
-                while (match(TokenType.COMMA)) {
-                  expression();
-                  valCount++;
-                }
-              }
-            }
-            consume(TokenType.RIGHT_BRACK, "Expect ']' after list initializer");
-            if (valCount >= 0) {
-              emitBytes(OpCode.LIST_INIT.index, valCount);
-            } else {
-              emitByte(OpCode.LIST_INIT_RANGE.index);
-            }
-          },
-          // list index
-          (final bool canAssign) {
-            var getRange = match(TokenType.COLON);
-            // Left hand side operand
-            if (getRange) {
-              emitConstant(Nil);
-            } else {
-              expression();
-              getRange = match(TokenType.COLON);
-            }
-            // Right hand side operand
-            if (match(TokenType.RIGHT_BRACK)) {
-              if (getRange) emitConstant(Nil);
-            } else {
-              if (getRange) expression();
-              consume(TokenType.RIGHT_BRACK, "Expect ']' after list indexing");
-            }
-            // Emit operation
-            if (getRange) {
-              emitOp(OpCode.CONTAINER_GET_RANGE);
-            } else if (canAssign && match(TokenType.EQUAL)) {
-              expression();
-              emitOp(OpCode.CONTAINER_SET);
-            } else {
-              emitOp(OpCode.CONTAINER_GET);
-            }
-          },
-          Precedence.CALL,
-        );
-      case TokenType.RIGHT_BRACK:
-        return const ParseRule(null, null, Precedence.NONE);
-      case TokenType.COMMA:
-        return const ParseRule(null, null, Precedence.NONE);
-      case TokenType.DOT:
-        // dot
-        return ParseRule(null, (final bool canAssign) {
-          consume(TokenType.IDENTIFIER, "Expect property name after '.'");
-          final name = identifierConstant(parser!.previous!);
-          if (canAssign && match(TokenType.EQUAL)) {
-            expression();
-            emitBytes(OpCode.SET_PROPERTY.index, name);
-          } else if (match(TokenType.LEFT_PAREN)) {
-            final argCount = argumentList();
-            emitBytes(OpCode.INVOKE.index, name);
-            emitByte(argCount);
-          } else {
-            emitBytes(OpCode.GET_PROPERTY.index, name);
-          }
-        }, Precedence.CALL,);
-      case TokenType.MINUS:
-        return ParseRule(unary, binary, Precedence.TERM);
-      case TokenType.PLUS:
-        return ParseRule(null, binary, Precedence.TERM);
-      case TokenType.SEMICOLON:
-        return const ParseRule(null, null, Precedence.NONE);
-      case TokenType.SLASH:
-        return ParseRule(null, binary, Precedence.FACTOR);
-      case TokenType.STAR:
-        return ParseRule(null, binary, Precedence.FACTOR);
-      case TokenType.CARET:
-        return ParseRule(null, binary, Precedence.POWER);
-      case TokenType.PERCENT:
-        return ParseRule(null, binary, Precedence.FACTOR);
-      case TokenType.COLON:
-        return const ParseRule(null, null, Precedence.NONE);
-      case TokenType.BANG:
-        return ParseRule(unary, null, Precedence.NONE);
-      case TokenType.BANG_EQUAL:
-        return ParseRule(null, binary, Precedence.EQUALITY);
-      case TokenType.EQUAL:
-        return const ParseRule(null, null, Precedence.NONE);
-      case TokenType.EQUAL_EQUAL:
-        return ParseRule(null, binary, Precedence.EQUALITY);
-      case TokenType.GREATER:
-        return ParseRule(null, binary, Precedence.COMPARISON);
-      case TokenType.GREATER_EQUAL:
-        return ParseRule(null, binary, Precedence.COMPARISON);
-      case TokenType.LESS:
-        return ParseRule(null, binary, Precedence.COMPARISON);
-      case TokenType.LESS_EQUAL:
-        return ParseRule(null, binary, Precedence.COMPARISON);
-      case TokenType.IDENTIFIER:
-        return ParseRule((final bool canAssign) {
-          getOrSetVariable(parser!.previous, canAssign);
-        }, null, Precedence.NONE);
-      case TokenType.STRING:
-        // string
-        return ParseRule((final bool canAssign) {
-          final str = parser!.previous!.str;
-          emitConstant(str);
-        }, null, Precedence.NONE,);
-      case TokenType.NUMBER:
-        // number
-        return ParseRule((final bool canAssign) {
-          final value = double.tryParse(parser!.previous!.str!);
-          if (value == null) {
-            parser!.error('Invalid number');
-          } else {
-            emitConstant(value);
-          }
-        }, null, Precedence.NONE);
-      case TokenType.OBJECT:
-        // object
-        return ParseRule((final bool canAssign) {
-          emitConstant(null);
-        }, null, Precedence.NONE,);
-      case TokenType.AND:
-        // and
-        return ParseRule(null, (final bool canAssign) {
-          final endJump = emitJump(OpCode.JUMP_IF_FALSE);
-          emitOp(OpCode.POP);
-          parsePrecedence(Precedence.AND);
-          patchJump(endJump);
-        }, Precedence.AND,);
-      case TokenType.CLASS:
-        return const ParseRule(null, null, Precedence.NONE);
-      case TokenType.ELSE:
-        return const ParseRule(null, null, Precedence.NONE);
-      case TokenType.FALSE:
-        return ParseRule(literal, null, Precedence.NONE);
-      case TokenType.FOR:
-        return const ParseRule(null, null, Precedence.NONE);
-      case TokenType.FUN:
-        return const ParseRule(null, null, Precedence.NONE);
-      case TokenType.IF:
-        return const ParseRule(null, null, Precedence.NONE);
-      case TokenType.NIL:
-        return ParseRule(literal, null, Precedence.NONE);
-      case TokenType.OR:
-        // or
-        return ParseRule(null, (final bool canAssign) {
-          final elseJump = emitJump(OpCode.JUMP_IF_FALSE);
-          final endJump = emitJump(OpCode.JUMP);
-          patchJump(elseJump);
-          emitOp(OpCode.POP);
-          parsePrecedence(Precedence.OR);
-          patchJump(endJump);
-        }, Precedence.OR,);
-      case TokenType.PRINT:
-        return const ParseRule(null, null, Precedence.NONE);
-      case TokenType.RETURN:
-        return const ParseRule(null, null, Precedence.NONE);
-      case TokenType.SUPER:
-        // super
-        return ParseRule((final bool canAssign) {
-          if (currentClass == null) {
-            parser!.error("Can't use 'super' outside of a class");
-          } else if (!currentClass!.hasSuperclass) {
-            parser!.error("Can't use 'super' in a class with no superclass");
-          }
-          consume(TokenType.DOT, "Expect '.' after 'super'");
-          consume(TokenType.IDENTIFIER, 'Expect superclass method name');
-          final name = identifierConstant(parser!.previous!);
-          getOrSetVariable(syntheticToken('this'), false);
-          if (match(TokenType.LEFT_PAREN)) {
-            final argCount = argumentList();
-            getOrSetVariable(syntheticToken('super'), false);
-            emitBytes(OpCode.SUPER_INVOKE.index, name);
-            emitByte(argCount);
-          } else {
-            getOrSetVariable(syntheticToken('super'), false);
-            emitBytes(OpCode.GET_SUPER.index, name);
-          }
-        }, null, Precedence.NONE,);
-      case TokenType.THIS:
-        // this
-        return ParseRule((final bool canAssign) {
-          if (currentClass == null) {
-            parser!.error("Can't use 'this' outside of a class");
-            return;
-          }
-          getOrSetVariable(parser!.previous, false);
-        }, null, Precedence.NONE,);
-      case TokenType.TRUE:
-        return ParseRule(literal, null, Precedence.NONE);
-      case TokenType.VAR:
-        return const ParseRule(null, null, Precedence.NONE);
-      case TokenType.WHILE:
-        return const ParseRule(null, null, Precedence.NONE);
-      case TokenType.BREAK:
-        return const ParseRule(null, null, Precedence.NONE);
-      case TokenType.CONTINUE:
-        return const ParseRule(null, null, Precedence.NONE);
-      case TokenType.ERROR:
-        return const ParseRule(null, null, Precedence.NONE);
-      case TokenType.EOF:
-        return const ParseRule(null, null, Precedence.NONE);
-      // ignore: no_default_cases
-      default:
-        return null;
-    }
-  }
-
-  void expression() {
-    parsePrecedence(Precedence.ASSIGNMENT);
-  }
-
-  void block() {
-    while (!parser!.check(TokenType.RIGHT_BRACE) && !parser!.check(TokenType.EOF)) {
-      declaration();
-    }
-    consume(TokenType.RIGHT_BRACE, 'Unterminated block');
-  }
-
-  void declaration() {
-    void beginScope() {
-      scopeDepth++;
-    }
-
-    void endScope() {
-      scopeDepth--;
-      while (locals.isNotEmpty && locals.last.depth > scopeDepth) {
-        if (locals.last.isCaptured) {
-          emitOp(OpCode.CLOSE_UPVALUE);
-        } else {
-          emitOp(OpCode.POP);
-        }
-        locals.removeLast();
-      }
-    }
-
-    void varDeclaration() {
-      do {
-        final global = parseVariable('Expect variable name');
-        final token = parser!.previous;
-        if (match(TokenType.EQUAL)) {
-          expression();
-        } else {
-          emitOp(OpCode.NIL);
-        }
-        defineVariable(global, token: token);
-      } while (match(TokenType.COMMA));
-      consume(TokenType.SEMICOLON, 'Expect a newline after variable declaration');
-    }
-
-    void statement() {
-      void expressionStatement() {
-        expression();
-        consume(TokenType.SEMICOLON, 'Expect a newline after expression');
-        emitOp(OpCode.POP);
-      }
-
-      if (match(TokenType.PRINT)) {
-        // print statement
-        expression();
-        consume(TokenType.SEMICOLON, 'Expect a newline after value');
-        emitOp(OpCode.PRINT);
-      } else if (match(TokenType.FOR)) {
-        // for statement check
-        if (match(TokenType.LEFT_PAREN)) {
-          // legacy for statement
-          // Deprecated
-          beginScope();
-          // consume(TokenType.LEFT_PAREN, "Expect '(' after 'for'");
-          if (match(TokenType.SEMICOLON)) {
-            // No initializer.
-          } else if (match(TokenType.VAR)) {
-            varDeclaration();
-          } else {
-            expressionStatement();
-          }
-          var loopStart = currentChunk.count;
-          var exitJump = -1;
-          if (!match(TokenType.SEMICOLON)) {
-            expression();
-            consume(TokenType.SEMICOLON, "Expect ';' after loop condition");
-            exitJump = emitJump(OpCode.JUMP_IF_FALSE);
-            emitOp(OpCode.POP); // Condition.
-          }
-          if (!match(TokenType.RIGHT_PAREN)) {
-            final bodyJump = emitJump(OpCode.JUMP);
-            final incrementStart = currentChunk.count;
-            expression();
-            emitOp(OpCode.POP);
-            consume(TokenType.RIGHT_PAREN, "Expect ')' after for clauses");
-            emitLoop(loopStart);
-            loopStart = incrementStart;
-            patchJump(bodyJump);
-          }
-          statement();
-          emitLoop(loopStart);
-          if (exitJump != -1) {
-            patchJump(exitJump);
-            emitOp(OpCode.POP); // Condition.
-          }
-          endScope();
-        } else {
-          // for statement
-          beginScope();
-          // Key variable
-          parseVariable('Expect variable name'); // Streamline those operations
-          emitOp(OpCode.NIL);
-          defineVariable(0, token: parser!.previous); // Remove 0
-          final stackIdx = locals.length - 1;
-          if (match(TokenType.COMMA)) {
-            // Value variable
-            parseVariable('Expect variable name');
-            emitOp(OpCode.NIL);
-            defineVariable(0, token: parser!.previous);
-          } else {
-            // Create dummy value slot
-            addLocal(syntheticToken('_for_val_'));
-            emitConstant(0); // Emit a zero to permute val & key
-            markLocalVariableInitialized();
-          }
-          // Now add two dummy local variables. Idx & entries
-          addLocal(syntheticToken('_for_idx_'));
-          emitOp(OpCode.NIL);
-          markLocalVariableInitialized();
-          addLocal(syntheticToken('_for_iterable_'));
-          emitOp(OpCode.NIL);
-          markLocalVariableInitialized();
-          // Rest of the loop
-          consume(TokenType.IN, "Expect 'in' after loop variables");
-          expression(); // Iterable
-          // Iterator
-          final loopStart = currentChunk.count;
-          emitBytes(OpCode.CONTAINER_ITERATE.index, stackIdx);
-          final exitJump = emitJump(OpCode.JUMP_IF_FALSE);
-          emitOp(OpCode.POP); // Condition
-          // Body
-          statement();
-          emitLoop(loopStart);
-          // Exit
-          patchJump(exitJump);
-          emitOp(OpCode.POP); // Condition
-          endScope();
-        }
-      } else if (match(TokenType.IF)) {
-        // if statement
-        // consume(TokenType.LEFT_PAREN, "Expect '(' after 'if'");
-        expression();
-        // consume(TokenType.RIGHT_PAREN, "Expect ')' after condition"); // [paren]
-        final thenJump = emitJump(OpCode.JUMP_IF_FALSE);
-        emitOp(OpCode.POP);
-        statement();
-        final elseJump = emitJump(OpCode.JUMP);
-        patchJump(thenJump);
-        emitOp(OpCode.POP);
-        if (match(TokenType.ELSE)) statement();
-        patchJump(elseJump);
-      } else if (match(TokenType.RETURN)) {
-        // return statement
-        // if (type == FunctionType.SCRIPT) {
-        //   parser.error("Can't return from top-level code");
-        // }
-        if (match(TokenType.SEMICOLON)) {
-          emitReturn();
-        } else {
-          if (type == FunctionType.INITIALIZER) {
-            parser!.error("Can't return a value from an initializer");
-          }
-          expression();
-          consume(TokenType.SEMICOLON, 'Expect a newline after return value');
-          emitOp(OpCode.RETURN);
-        }
-      } else if (match(TokenType.WHILE)) {
-        final loopStart = currentChunk.count;
-        // consume(TokenType.LEFT_PAREN, "Expect '(' after 'while'");
-        expression();
-        // consume(TokenType.RIGHT_PAREN, "Expect ')' after condition");
-        final exitJump = emitJump(OpCode.JUMP_IF_FALSE);
-        emitOp(OpCode.POP);
-        statement();
-        emitLoop(loopStart);
-        patchJump(exitJump);
-        emitOp(OpCode.POP);
-      } else if (match(TokenType.LEFT_BRACE)) {
-        beginScope();
-        block();
-        endScope();
-      } else {
-        expressionStatement();
-      }
-    }
-
-    void functionBlock(final FunctionType type) {
-      final compiler = Compiler._(type, enclosing: this);
-      final function = () {
-        // beginScope(); // [no-end-scope]
-        // not needed because of wrapped compiler scope propagation
-
-        // Compile the parameter list.
-        // final functionToken = parser.previous;
-        compiler.consume(TokenType.LEFT_PAREN, "Expect '(' after function name");
-        final args = <NaturalToken?>[];
-        if (!compiler.parser!.check(TokenType.RIGHT_PAREN)) {
-          do {
-            compiler.function!.arity++;
-            if (compiler.function!.arity > 255) {
-              compiler.parser!.errorAtCurrent("Can't have more than 255 parameters");
-            }
-            compiler.parseVariable('Expect parameter name');
-            compiler.markLocalVariableInitialized();
-            args.add(compiler.parser!.previous);
-          } while (compiler.match(TokenType.COMMA));
-        }
-        for (var k = 0; k < args.length; k++) {
-          compiler.defineVariable(0, token: args[k], peekDist: args.length - 1 - k);
-        }
-        compiler.consume(TokenType.RIGHT_PAREN, "Expect ')' after parameters");
-        // The body.
-        compiler.consume(TokenType.LEFT_BRACE, 'Expect function body');
-        compiler.block();
-        // Create the function object.
-        return compiler.endCompiler();
-      }();
-      emitBytes(OpCode.CLOSURE.index, makeConstant(function));
-      for (var i = 0; i < compiler.upvalues.length; i++) {
-        emitByte(compiler.upvalues[i].isLocal ? 1 : 0);
-        emitByte(compiler.upvalues[i].index);
-      }
-    }
-
-    if (match(TokenType.CLASS)) {
-      // class declaration
-      consume(TokenType.IDENTIFIER, 'Expect class name');
-      final className = parser!.previous;
-      final nameConstant = identifierConstant(parser!.previous!);
-      delareLocalVariable();
-      emitBytes(OpCode.CLASS.index, nameConstant);
-      defineVariable(nameConstant);
-      final classCompiler = ClassCompiler(currentClass, parser!.previous, false);
-      currentClass = classCompiler;
-      if (match(TokenType.LESS)) {
-        consume(TokenType.IDENTIFIER, 'Expect superclass name');
-        getOrSetVariable(parser!.previous, false);
-        if (identifiersEqual(className!, parser!.previous!)) {
-          parser!.error("A class can't inherit from itself");
-        }
-        beginScope();
-        addLocal(syntheticToken('super'));
-        defineVariable(0);
-        getOrSetVariable(className, false);
-        emitOp(OpCode.INHERIT);
-        classCompiler.hasSuperclass = true;
-      }
-      getOrSetVariable(className, false);
-      consume(TokenType.LEFT_BRACE, 'Expect class body');
-      while (!parser!.check(TokenType.RIGHT_BRACE) && !parser!.check(TokenType.EOF)) {
-        // parse method
-        consume(TokenType.IDENTIFIER, 'Expect method name');
-        final identifier = parser!.previous!;
-        final constant = identifierConstant(identifier);
-        var type = FunctionType.METHOD;
-        if (identifier.str == 'init') {
-          type = FunctionType.INITIALIZER;
-        }
-        functionBlock(type);
-        emitBytes(OpCode.METHOD.index, constant);
-      }
-      consume(TokenType.RIGHT_BRACE, 'Unterminated class body');
-      emitOp(OpCode.POP);
-      if (classCompiler.hasSuperclass) {
-        endScope();
-      }
-      currentClass = currentClass!.enclosing;
-    } else if (match(TokenType.FUN)) {
-      // fun declaration
-      final global = parseVariable('Expect function name');
-      final token = parser!.previous;
-      markLocalVariableInitialized();
-      functionBlock(FunctionType.FUNCTION);
-      defineVariable(global, token: token);
-    } else if (match(TokenType.VAR)) {
-      varDeclaration();
-    } else {
-      statement();
-    }
-    if (parser!.panicMode) {
-      // synchronize
-      parser!.panicMode = false;
-      while (parser!.current!.type != TokenType.EOF) {
-        if (parser!.previous!.type == TokenType.SEMICOLON) {
-          return;
-        } else {
-          switch (parser!.current!.type) {
-            case TokenType.CLASS:
-            case TokenType.FUN:
-            case TokenType.VAR:
-            case TokenType.FOR:
-            case TokenType.IF:
-            case TokenType.WHILE:
-            case TokenType.PRINT:
-            case TokenType.RETURN:
-              return;
-          // ignore: no_default_cases
-            default:
-            // Do nothing.
-          }
-          parser!.advance();
-        }
-      }
-    }
-  }
-}
-
-class Parser {
-  final List<NaturalToken> tokens;
-  final List<CompilerError> errors = [];
-  NaturalToken? current;
-  NaturalToken? previous;
-  NaturalToken? secondPrevious;
-  int currentIdx = 0;
-  bool panicMode = false;
-  Debug? debug;
-
-  Parser(this.tokens, {
-    final bool silent = false,
-  }) {
-    debug = Debug(silent);
-  }
-
-  void errorAt(
-    final NaturalToken? token,
-    final String? message,
-  ) {
-    if (panicMode) {
-      return;
-    } else {
-      panicMode = true;
-      final error = CompilerError(token!, message);
-      errors.add(error);
-      error.dump(debug!);
-    }
-  }
-
-  void error(final String message) {
-    errorAt(previous, message);
-  }
-
-  void errorAtCurrent(final String? message) {
-    errorAt(current, message);
-  }
-
-  void advance() {
-    secondPrevious = previous; // TODO: is it needed?
-    previous = current;
-    while (currentIdx < tokens.length) {
-      current = tokens[currentIdx++];
-      // Skip invalid tokens
-      if (current!.type == TokenType.ERROR) {
-        errorAtCurrent(current!.str);
-      } else if (current!.type != TokenType.COMMENT) {
-        break;
-      }
-    }
-  }
-
-  void consume(final TokenType type, final String message) {
-    if (current!.type == type) {
-      advance();
-      return;
-    }
-    errorAtCurrent(message);
-  }
-
-  bool check(final TokenType type) {
-    return current!.type == type;
-  }
-
-  bool matchPair(final TokenType first, final TokenType second) {
-    if (!check(first) || currentIdx >= tokens.length || tokens[currentIdx].type != second) return false;
-    advance();
-    advance();
-    return true;
-  }
-
-  bool match(final TokenType type) {
-    if (!check(type)) return false;
-    advance();
-    return true;
-  }
+  PRIMARY,
 }
 // endregion
 
 // region table
 class Table {
-  // Optimisation: replace with MAP
   final Map<String?, Object?> data = <String?, Object?>{};
 
   Object? getVal(final String? key) {

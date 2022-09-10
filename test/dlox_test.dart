@@ -4,7 +4,7 @@ import 'package:dlox/lexer.dart';
 import 'package:dlox/test_suite.dart';
 import 'package:test/test.dart';
 
-void main() async {
+Future<void> main() async {
   DLoxTestSuite.run(
     deps: DLoxTestSuiteDependencies(
       lexer: lex,
