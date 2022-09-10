@@ -18,7 +18,7 @@ CompilerResult compile(
     silent: silent,
   );
   final compiler = Compiler(
-    FunctionType.SCRIPT,
+    type: FunctionType.SCRIPT,
     parser: parser,
     debug_trace_bytecode: traceBytecode,
   );
@@ -34,9 +34,11 @@ CompilerResult compile(
   );
 }
 
-// TODO move parsing logic into the parser
-// TODO convert ast to bytecode as a separate step
 class Compiler with CompilerMixin {
+  @override
+  final List<Local> locals;
+  @override
+  final List<Upvalue> upvalues;
   @override
   final Parser parser;
   @override
@@ -48,37 +50,56 @@ class Compiler with CompilerMixin {
   @override
   ClassCompiler? current_class;
   @override
-  ObjFunction? function;
+  ObjFunction function;
 
   @override
   Compiler? get enclosing => null;
 
-  Compiler(
-    final this.type, {
+  Compiler({
+    required final this.type,
     required final this.parser,
     final this.debug_trace_bytecode = false,
-  }) : scope_depth = 0, function = ObjFunction() {
-    switch(type) {
-      case FunctionType.FUNCTION:
-        function!.name = this.parser.previous!.str;
-        locals.add(Local(const SyntheticTokenImpl(type: TokenType.FUN, str: ''), depth: 0));
-        break;
-      case FunctionType.INITIALIZER:
-        function!.name = this.parser.previous!.str;
-        locals.add(Local(const SyntheticTokenImpl(type: TokenType.FUN, str: 'this'), depth: 0));
-        break;
-      case FunctionType.METHOD:
-        function!.name = this.parser.previous!.str;
-        locals.add(Local(const SyntheticTokenImpl(type: TokenType.FUN, str: 'this'), depth: 0));
-        break;
-      case FunctionType.SCRIPT:
-        locals.add(Local(const SyntheticTokenImpl(type: TokenType.FUN, str: 'this'), depth: 0));
-        break;
-    }
-  }
+  })  : scope_depth = 0,
+        function = (() {
+          final function = ObjFunction();
+          switch (type) {
+            case FunctionType.FUNCTION:
+              function.name = parser.previous!.str;
+              break;
+            case FunctionType.INITIALIZER:
+              function.name = parser.previous!.str;
+              break;
+            case FunctionType.METHOD:
+              function.name = parser.previous!.str;
+              break;
+            case FunctionType.SCRIPT:
+              break;
+          }
+          return function;
+        }()),
+        locals = [
+          Local(
+            SyntheticTokenImpl(
+              type: TokenType.FUN,
+              str: () {
+                if (type != FunctionType.FUNCTION) {
+                  return 'this';
+                } else {
+                  return '';
+                }
+              }(),
+            ),
+            depth: 0,
+          ),
+        ],
+        upvalues = [];
 }
 
 class CompilerWrapped with CompilerMixin {
+  @override
+  final List<Local> locals;
+  @override
+  final List<Upvalue> upvalues;
   @override
   final Parser parser;
   @override
@@ -92,46 +113,62 @@ class CompilerWrapped with CompilerMixin {
   @override
   ClassCompiler? current_class;
   @override
-  ObjFunction? function;
+  ObjFunction function;
 
-  CompilerWrapped(
-    final this.type, {
+  CompilerWrapped({
+    required final this.type,
     required final this.enclosing,
-  })  : function = ObjFunction(),
+  })  : function = (() {
+          final function = ObjFunction();
+          switch (type) {
+            case FunctionType.FUNCTION:
+              function.name = enclosing.parser.previous!.str;
+              break;
+            case FunctionType.INITIALIZER:
+              function.name = enclosing.parser.previous!.str;
+              break;
+            case FunctionType.METHOD:
+              function.name = enclosing.parser.previous!.str;
+              break;
+            case FunctionType.SCRIPT:
+              break;
+          }
+          return function;
+        }()),
         parser = enclosing.parser,
         current_class = enclosing.current_class,
         scope_depth = enclosing.scope_depth + 1,
-        debug_trace_bytecode = enclosing.debug_trace_bytecode {
-    if (type != FunctionType.SCRIPT) {
-      function!.name = this.parser.previous!.str;
-    }
-    locals.add(
-      Local(
-        SyntheticTokenImpl(
-          type: TokenType.FUN,
-          str: () {
-            if (type != FunctionType.FUNCTION) {
-              return 'this';
-            } else {
-              return '';
-            }
-          }(),
-        ),
-        depth: 0,
-      ),
-    );
-  }
+        debug_trace_bytecode = enclosing.debug_trace_bytecode,
+        locals = [
+          Local(
+            SyntheticTokenImpl(
+              type: TokenType.FUN,
+              str: () {
+                if (type != FunctionType.FUNCTION) {
+                  return 'this';
+                } else {
+                  return '';
+                }
+              }(),
+            ),
+            depth: 0,
+          ),
+        ],
+        upvalues = [];
 }
 
+// TODO convert this to a two phase process:
+// TODO  * parse to an ast first
+// TODO  * compile to bytecode.
 mixin CompilerMixin {
-  final List<Local> locals = [];
-  final List<Upvalue> upvalues = [];
+  List<Local> get locals;
+
+  List<Upvalue> get upvalues;
+
   abstract int scope_depth;
   abstract ClassCompiler? current_class;
-  abstract ObjFunction? function;
+  abstract ObjFunction function;
 
-  // TODO I can't move the parsing routines into the parser
-  // TODO  because compilation happens during parsing.
   Parser get parser;
 
   FunctionType get type;
@@ -140,23 +177,16 @@ mixin CompilerMixin {
 
   bool get debug_trace_bytecode;
 
-  ObjFunction? end_compiler() {
+  ObjFunction end_compiler() {
     emit_return();
     if (parser.errors.isEmpty && debug_trace_bytecode) {
-      parser.debug.disassembleChunk(current_chunk, function!.name ?? '<script>');
+      parser.debug.disassemble_chunk(current_chunk, function.name ?? '<script>');
     }
     return function;
   }
 
   Chunk get current_chunk {
-    return function!.chunk;
-  }
-
-  void consume(
-    final TokenType type,
-    final String message,
-  ) {
-    parser.consume(type, message);
+    return function.chunk;
   }
 
   bool match(
@@ -216,7 +246,7 @@ mixin CompilerMixin {
   int make_constant(
     final Object? value,
   ) {
-    final constant = current_chunk.addConstant(value);
+    final constant = current_chunk.add_constant(value);
     if (constant > UINT8_MAX) {
       parser.error('Too many constants in one chunk');
       return 0;
@@ -278,19 +308,20 @@ mixin CompilerMixin {
     final int index,
     final bool is_local,
   ) {
-    assert(upvalues.length == function!.upvalueCount, "");
+    assert(upvalues.length == function.upvalueCount, "");
     for (var i = 0; i < upvalues.length; i++) {
       final upvalue = upvalues[i];
-      if (upvalue.index == index && upvalue.isLocal == is_local) {
+      if (upvalue.index == index && upvalue.is_local == is_local) {
         return i;
       }
     }
     if (upvalues.length == UINT8_COUNT) {
       parser.error('Too many closure variables in function');
       return 0;
+    } else {
+      upvalues.add(Upvalue(name, index, is_local));
+      return function.upvalueCount++;
     }
-    upvalues.add(Upvalue(name, index, is_local));
-    return function!.upvalueCount++;
   }
 
   int resolve_upvalue(
@@ -299,11 +330,11 @@ mixin CompilerMixin {
     if (enclosing == null) {
       return -1;
     } else {
-      final localIdx = enclosing!.resolve_local(name);
-      if (localIdx != -1) {
-        final local = enclosing!.locals[localIdx];
-        local.isCaptured = true;
-        return add_upvalue(local.name, localIdx, true);
+      final local_idx = enclosing!.resolve_local(name);
+      if (local_idx != -1) {
+        final local = enclosing!.locals[local_idx];
+        local.is_captured = true;
+        return add_upvalue(local.name, local_idx, true);
       } else {
         final upvalueIdx = enclosing!.resolve_upvalue(name);
         if (upvalueIdx != -1) {
@@ -321,16 +352,14 @@ mixin CompilerMixin {
   ) {
     if (locals.length >= UINT8_COUNT) {
       parser.error('Too many local variables in function');
-      return;
+    } else {
+      locals.add(Local(name));
     }
-    locals.add(Local(name));
   }
 
   void delare_local_variable() {
     // Global variables are implicitly declared.
-    if (scope_depth == 0) {
-      return;
-    } else {
+    if (scope_depth != 0) {
       final name = parser.previous;
       for (var i = locals.length - 1; i >= 0; i--) {
         final local = locals[i];
@@ -348,7 +377,7 @@ mixin CompilerMixin {
   int parse_variable(
     final String error_message,
   ) {
-    consume(TokenType.IDENTIFIER, error_message);
+    parser.consume(TokenType.IDENTIFIER, error_message);
     if (scope_depth > 0) {
       delare_local_variable();
       return 0;
@@ -358,48 +387,41 @@ mixin CompilerMixin {
   }
 
   void mark_local_variable_initialized() {
-    if (scope_depth == 0) return;
-    locals.last.depth = scope_depth;
+    if (scope_depth != 0) {
+      locals.last.depth = scope_depth;
+    }
   }
 
   void define_variable(
     final int global, {
     final NaturalToken? token,
-    final int peekDist = 0,
+    final int peek_dist = 0,
   }) {
-    final isLocal = scope_depth > 0;
-    if (isLocal) {
+    final is_local = scope_depth > 0;
+    if (is_local) {
       mark_local_variable_initialized();
     } else {
       emit_bytes(OpCode.DEFINE_GLOBAL.index, global);
     }
   }
 
-  int argument_list() {
-    var argCount = 0;
+  List<Expr> argument_list() {
+    final args = <Expr>[];
     if (!parser.check(TokenType.RIGHT_PAREN)) {
       do {
-        expression();
-        if (argCount == 255) {
+        args.add(expression());
+        if (args.length == 256) {
           parser.error("Can't have more than 255 arguments");
         }
-        argCount++;
       } while (match(TokenType.COMMA));
     }
-    consume(TokenType.RIGHT_PAREN, "Expect ')' after arguments");
-    return argCount;
-  }
-
-  void call(
-    final bool canAssign,
-  ) {
-    final arg_count = argument_list();
-    emit_bytes(OpCode.CALL.index, arg_count);
+    parser.consume(TokenType.RIGHT_PAREN, "Expect ')' after arguments");
+    return args;
   }
 
   void get_or_set_variable(
     final SyntheticToken? name,
-    final bool canAssign,
+    final bool can_assign,
   ) {
     bool matchPair(
       final TokenType first,
@@ -424,7 +446,7 @@ mixin CompilerMixin {
     }
     // Special mathematical assignment
     final assign_op = () {
-      if (canAssign) {
+      if (can_assign) {
         if (matchPair(TokenType.PLUS, TokenType.EQUAL)) {
           return OpCode.ADD;
         } else if (matchPair(TokenType.MINUS, TokenType.EQUAL)) {
@@ -444,7 +466,7 @@ mixin CompilerMixin {
         return null;
       }
     }();
-    if (canAssign && (assign_op != null || match(TokenType.EQUAL))) {
+    if (can_assign && (assign_op != null || match(TokenType.EQUAL))) {
       if (assign_op != null) emit_bytes(get_op.index, arg);
       expression();
       if (assign_op != null) emit_op(assign_op);
@@ -463,221 +485,91 @@ mixin CompilerMixin {
     );
   }
 
-  void parse_precedence(
+  Expr? parse_precedence(
     final Precedence precedence,
   ) {
-    Precedence get_precedence(
-      final TokenType type,
-    ) {
-      switch (type) {
+    parser.advance();
+    final can_assign = precedence.index <= Precedence.ASSIGNMENT.index;
+    final Expr? Function()? prefix_rule = () {
+      switch (parser.previous!.type) {
         case TokenType.LEFT_PAREN:
-          return Precedence.CALL;
-        case TokenType.RIGHT_PAREN:
-          return Precedence.NONE;
-        case TokenType.LEFT_BRACE:
-          return Precedence.NONE;
-        case TokenType.RIGHT_BRACE:
-          return Precedence.NONE;
-        case TokenType.LEFT_BRACK:
-          return Precedence.CALL;
-        case TokenType.RIGHT_BRACK:
-          return Precedence.NONE;
-        case TokenType.COMMA:
-          return Precedence.NONE;
-        case TokenType.DOT:
-          return Precedence.CALL;
-        case TokenType.MINUS:
-          return Precedence.TERM;
-        case TokenType.PLUS:
-          return Precedence.TERM;
-        case TokenType.SEMICOLON:
-          return Precedence.NONE;
-        case TokenType.SLASH:
-          return Precedence.FACTOR;
-        case TokenType.STAR:
-          return Precedence.FACTOR;
-        case TokenType.CARET:
-          return Precedence.POWER;
-        case TokenType.PERCENT:
-          return Precedence.FACTOR;
-        case TokenType.COLON:
-          return Precedence.NONE;
-        case TokenType.BANG:
-          return Precedence.NONE;
-        case TokenType.BANG_EQUAL:
-          return Precedence.EQUALITY;
-        case TokenType.EQUAL:
-          return Precedence.NONE;
-        case TokenType.EQUAL_EQUAL:
-          return Precedence.EQUALITY;
-        case TokenType.GREATER:
-          return Precedence.COMPARISON;
-        case TokenType.GREATER_EQUAL:
-          return Precedence.COMPARISON;
-        case TokenType.LESS:
-          return Precedence.COMPARISON;
-        case TokenType.LESS_EQUAL:
-          return Precedence.COMPARISON;
-        case TokenType.IDENTIFIER:
-          return Precedence.NONE;
-        case TokenType.STRING:
-          return Precedence.NONE;
-        case TokenType.NUMBER:
-          return Precedence.NONE;
-        case TokenType.OBJECT:
-          return Precedence.NONE;
-        case TokenType.AND:
-          return Precedence.AND;
-        case TokenType.CLASS:
-          return Precedence.NONE;
-        case TokenType.ELSE:
-          return Precedence.NONE;
-        case TokenType.FALSE:
-          return Precedence.NONE;
-        case TokenType.FOR:
-          return Precedence.NONE;
-        case TokenType.FUN:
-          return Precedence.NONE;
-        case TokenType.IF:
-          return Precedence.NONE;
-        case TokenType.NIL:
-          return Precedence.NONE;
-        case TokenType.OR:
-          return Precedence.OR;
-        case TokenType.PRINT:
-          return Precedence.NONE;
-        case TokenType.RETURN:
-          return Precedence.NONE;
-        case TokenType.SUPER:
-          return Precedence.NONE;
-        case TokenType.THIS:
-          return Precedence.NONE;
-        case TokenType.TRUE:
-          return Precedence.NONE;
-        case TokenType.VAR:
-          return Precedence.NONE;
-        case TokenType.WHILE:
-          return Precedence.NONE;
-        case TokenType.BREAK:
-          return Precedence.NONE;
-        case TokenType.CONTINUE:
-          return Precedence.NONE;
-        case TokenType.ERROR:
-          return Precedence.NONE;
-        case TokenType.EOF:
-          return Precedence.NONE;
-        case TokenType.IN:
-          return Precedence.NONE;
-        case TokenType.COMMENT:
-          return Precedence.NONE;
-      }
-    }
-
-    void Function(bool can_assign)? get_prefix_rule(
-      final TokenType type,
-    ) {
-      switch (type) {
-        case TokenType.LEFT_PAREN:
-          return (final bool canAssign) {
-            expression();
-            consume(TokenType.RIGHT_PAREN, "Expect ')' after expression");
+          return () {
+            final expr = expression();
+            parser.consume(TokenType.RIGHT_PAREN, "Expect ')' after expression");
+            return expr;
           };
-        case TokenType.RIGHT_PAREN:
-          return null;
         case TokenType.LEFT_BRACE:
-          return (final bool canAssign) {
-            var valCount = 0;
+          return () {
+            int val_count = 0;
+            final entries = <ExprmapMapEntry>[];
             if (!parser.check(TokenType.RIGHT_BRACE)) {
               do {
-                expression();
-                consume(TokenType.COLON, "Expect ':' between map key-value pairs");
-                expression();
-                valCount++;
+                final key = expression();
+                parser.consume(TokenType.COLON, "Expect ':' between map key-value pairs");
+                final value = expression();
+                entries.add(
+                  ExprmapMapEntry(
+                    key: key,
+                    value: value,
+                  ),
+                );
+                val_count++;
               } while (match(TokenType.COMMA));
             }
-            consume(TokenType.RIGHT_BRACE, "Expect '}' after map initializer");
-            emit_bytes(OpCode.MAP_INIT.index, valCount);
+            parser.consume(TokenType.RIGHT_BRACE, "Expect '}' after map initializer");
+            emit_bytes(OpCode.MAP_INIT.index, val_count);
+            return ExprMap(
+              entries: entries,
+            );
           };
-        case TokenType.RIGHT_BRACE:
-          return null;
         case TokenType.LEFT_BRACK:
-          return (final bool canAssign) {
-            var valCount = 0;
+          return () {
+            int val_count = 0;
+            final values = <Expr>[];
             if (!parser.check(TokenType.RIGHT_BRACK)) {
-              expression();
-              valCount += 1;
+              values.add(expression());
+              val_count += 1;
               if (parser.match(TokenType.COLON)) {
-                expression();
-                valCount = -1;
+                values.add(expression());
+                val_count = -1;
               } else {
                 while (match(TokenType.COMMA)) {
-                  expression();
-                  valCount++;
+                  values.add(expression());
+                  val_count++;
                 }
               }
             }
-            consume(TokenType.RIGHT_BRACK, "Expect ']' after list initializer");
-            if (valCount >= 0) {
-              emit_bytes(OpCode.LIST_INIT.index, valCount);
+            parser.consume(TokenType.RIGHT_BRACK, "Expect ']' after list initializer");
+            if (val_count >= 0) {
+              emit_bytes(OpCode.LIST_INIT.index, val_count);
             } else {
               emit_byte(OpCode.LIST_INIT_RANGE.index);
             }
+            return ExprList(
+              values: values,
+            );
           };
-        case TokenType.RIGHT_BRACK:
-          return null;
-        case TokenType.COMMA:
-          return null;
-        case TokenType.DOT:
-          return null;
         case TokenType.MINUS:
-          return (final a) {
+          return () {
             parse_precedence(Precedence.UNARY);
             emit_op(OpCode.NEGATE);
           };
-        case TokenType.PLUS:
-          return null;
-        case TokenType.SEMICOLON:
-          return null;
-        case TokenType.SLASH:
-          return null;
-        case TokenType.STAR:
-          return null;
-        case TokenType.CARET:
-          return null;
-        case TokenType.PERCENT:
-          return null;
-        case TokenType.COLON:
-          return null;
         case TokenType.BANG:
-          return (final a) {
+          return () {
             parse_precedence(Precedence.UNARY);
             emit_op(OpCode.NOT);
           };
-        case TokenType.BANG_EQUAL:
-          return null;
-        case TokenType.EQUAL:
-          return null;
-        case TokenType.EQUAL_EQUAL:
-          return null;
-        case TokenType.GREATER:
-          return null;
-        case TokenType.GREATER_EQUAL:
-          return null;
-        case TokenType.LESS:
-          return null;
-        case TokenType.LESS_EQUAL:
-          return null;
         case TokenType.IDENTIFIER:
-          return (final bool canAssign) => get_or_set_variable(parser.previous, canAssign);
+          return () {
+            get_or_set_variable(parser.previous, can_assign);
+          };
         case TokenType.STRING:
-          // string
-          return (final bool canAssign) {
+          return () {
             final str = parser.previous!.str;
             emit_constant(str);
           };
         case TokenType.NUMBER:
-          // number
-          return (final bool canAssign) {
+          return () {
             final value = double.tryParse(parser.previous!.str!);
             if (value == null) {
               parser.error('Invalid number');
@@ -686,383 +578,186 @@ mixin CompilerMixin {
             }
           };
         case TokenType.OBJECT:
-          // object
-          return (final bool canAssign) {
+          return () {
             emit_constant(null);
           };
-        case TokenType.AND:
-          // and
-          return null;
-        case TokenType.CLASS:
-          return null;
-        case TokenType.ELSE:
-          return null;
         case TokenType.FALSE:
-          return (final a) => emit_op(OpCode.FALSE);
-        case TokenType.FOR:
-          return null;
-        case TokenType.FUN:
-          return null;
-        case TokenType.IF:
-          return null;
+          return () {
+            emit_op(OpCode.FALSE);
+          };
         case TokenType.NIL:
-          return (final a) => emit_op(OpCode.NIL);
-        case TokenType.OR:
-          // or
-          return null;
-        case TokenType.PRINT:
-          return null;
-        case TokenType.RETURN:
-          return null;
+          return () {
+            emit_op(OpCode.NIL);
+          };
         case TokenType.SUPER:
-          // super
-          return (final bool canAssign) {
+          return () {
             if (current_class == null) {
               parser.error("Can't use 'super' outside of a class");
-            } else if (!current_class!.hasSuperclass) {
+            } else if (!current_class!.has_superclass) {
               parser.error("Can't use 'super' in a class with no superclass");
             }
-            consume(TokenType.DOT, "Expect '.' after 'super'");
-            consume(TokenType.IDENTIFIER, 'Expect superclass method name');
+            parser.consume(TokenType.DOT, "Expect '.' after 'super'");
+            parser.consume(TokenType.IDENTIFIER, 'Expect superclass method name');
             final name = identifier_constant(parser.previous!);
             get_or_set_variable(synthetic_token('this'), false);
             if (match(TokenType.LEFT_PAREN)) {
               final argCount = argument_list();
               get_or_set_variable(synthetic_token('super'), false);
               emit_bytes(OpCode.SUPER_INVOKE.index, name);
-              emit_byte(argCount);
+              emit_byte(argCount.length);
             } else {
               get_or_set_variable(synthetic_token('super'), false);
               emit_bytes(OpCode.GET_SUPER.index, name);
             }
           };
         case TokenType.THIS:
-          // this
-          return (final bool canAssign) {
+          return () {
             if (current_class == null) {
               parser.error("Can't use 'this' outside of a class");
-              return;
+            } else {
+              get_or_set_variable(parser.previous, false);
             }
-            get_or_set_variable(parser.previous, false);
           };
         case TokenType.TRUE:
-          return (final a) => emit_op(OpCode.TRUE);
-        case TokenType.VAR:
-          return null;
-        case TokenType.WHILE:
-          return null;
-        case TokenType.BREAK:
-          return null;
-        case TokenType.CONTINUE:
-          return null;
-        case TokenType.ERROR:
-          return null;
-        case TokenType.EOF:
-          return null;
+          return () {
+            emit_op(OpCode.TRUE);
+          };
         // ignore: no_default_cases
         default:
           return null;
       }
-    }
-
-    void Function(bool can_assign)? get_infix_rule(
-      final TokenType type,
-    ) {
-      void parse_binary(
-        final bool can_assign,
-      ) {
-        final operatorType = parser.previous!.type;
-        final rule = get_precedence(operatorType);
-        parse_precedence(Precedence.values[rule.index + 1]);
-        // Emit the operator instruction.
-        switch (operatorType) {
-          case TokenType.BANG_EQUAL:
-            emit_bytes(OpCode.EQUAL.index, OpCode.NOT.index);
-            break;
-          case TokenType.EQUAL_EQUAL:
-            emit_op(OpCode.EQUAL);
-            break;
-          case TokenType.GREATER:
-            emit_op(OpCode.GREATER);
-            break;
-          case TokenType.GREATER_EQUAL:
-            emit_bytes(OpCode.LESS.index, OpCode.NOT.index);
-            break;
-          case TokenType.LESS:
-            emit_op(OpCode.LESS);
-            break;
-          case TokenType.LESS_EQUAL:
-            emit_bytes(OpCode.GREATER.index, OpCode.NOT.index);
-            break;
-          case TokenType.PLUS:
-            emit_op(OpCode.ADD);
-            break;
-          case TokenType.MINUS:
-            emit_op(OpCode.SUBTRACT);
-            break;
-          case TokenType.STAR:
-            emit_op(OpCode.MULTIPLY);
-            break;
-          case TokenType.SLASH:
-            emit_op(OpCode.DIVIDE);
-            break;
-          case TokenType.CARET:
-            emit_op(OpCode.POW);
-            break;
-          case TokenType.PERCENT:
-            emit_op(OpCode.MOD);
-            break;
-          case TokenType.LEFT_PAREN:
-            throw Exception("Unreachable");
-          case TokenType.RIGHT_PAREN:
-            throw Exception("Unreachable");
-          case TokenType.LEFT_BRACE:
-            throw Exception("Unreachable");
-          case TokenType.RIGHT_BRACE:
-            throw Exception("Unreachable");
-          case TokenType.LEFT_BRACK:
-            throw Exception("Unreachable");
-          case TokenType.RIGHT_BRACK:
-            throw Exception("Unreachable");
-          case TokenType.COMMA:
-            throw Exception("Unreachable");
-          case TokenType.DOT:
-            throw Exception("Unreachable");
-          case TokenType.SEMICOLON:
-            throw Exception("Unreachable");
-          case TokenType.COLON:
-            throw Exception("Unreachable");
-          case TokenType.BANG:
-            throw Exception("Unreachable");
-          case TokenType.EQUAL:
-            throw Exception("Unreachable");
-          case TokenType.IDENTIFIER:
-            throw Exception("Unreachable");
-          case TokenType.STRING:
-            throw Exception("Unreachable");
-          case TokenType.NUMBER:
-            throw Exception("Unreachable");
-          case TokenType.OBJECT:
-            throw Exception("Unreachable");
-          case TokenType.AND:
-            throw Exception("Unreachable");
-          case TokenType.CLASS:
-            throw Exception("Unreachable");
-          case TokenType.ELSE:
-            throw Exception("Unreachable");
-          case TokenType.FALSE:
-            throw Exception("Unreachable");
-          case TokenType.FOR:
-            throw Exception("Unreachable");
-          case TokenType.FUN:
-            throw Exception("Unreachable");
-          case TokenType.IF:
-            throw Exception("Unreachable");
-          case TokenType.NIL:
-            throw Exception("Unreachable");
-          case TokenType.OR:
-            throw Exception("Unreachable");
-          case TokenType.PRINT:
-            throw Exception("Unreachable");
-          case TokenType.RETURN:
-            throw Exception("Unreachable");
-          case TokenType.SUPER:
-            throw Exception("Unreachable");
-          case TokenType.THIS:
-            throw Exception("Unreachable");
-          case TokenType.TRUE:
-            throw Exception("Unreachable");
-          case TokenType.VAR:
-            throw Exception("Unreachable");
-          case TokenType.WHILE:
-            throw Exception("Unreachable");
-          case TokenType.IN:
-            throw Exception("Unreachable");
-          case TokenType.BREAK:
-            throw Exception("Unreachable");
-          case TokenType.CONTINUE:
-            throw Exception("Unreachable");
-          case TokenType.ERROR:
-            throw Exception("Unreachable");
-          case TokenType.COMMENT:
-            throw Exception("Unreachable");
-          case TokenType.EOF:
-            throw Exception("Unreachable");
-        }
-      }
-
-      switch (type) {
-        case TokenType.LEFT_PAREN:
-          // grouping
-          return call;
-        case TokenType.RIGHT_PAREN:
-          return null;
-        case TokenType.LEFT_BRACE:
-          // map init
-          return null;
-        case TokenType.RIGHT_BRACE:
-          return null;
-        case TokenType.LEFT_BRACK:
-          // list index
-          return (final bool canAssign) {
-            var getRange = match(TokenType.COLON);
-            // Left hand side operand
-            if (getRange) {
-              emit_constant(Nil);
-            } else {
-              expression();
-              getRange = match(TokenType.COLON);
-            }
-            // Right hand side operand
-            if (match(TokenType.RIGHT_BRACK)) {
-              if (getRange) emit_constant(Nil);
-            } else {
-              if (getRange) expression();
-              consume(TokenType.RIGHT_BRACK, "Expect ']' after list indexing");
-            }
-            // Emit operation
-            if (getRange) {
-              emit_op(OpCode.CONTAINER_GET_RANGE);
-            } else if (canAssign && match(TokenType.EQUAL)) {
-              expression();
-              emit_op(OpCode.CONTAINER_SET);
-            } else {
-              emit_op(OpCode.CONTAINER_GET);
-            }
-          };
-        case TokenType.RIGHT_BRACK:
-          return null;
-        case TokenType.COMMA:
-          return null;
-        case TokenType.DOT:
-          // dot
-          return (final bool canAssign) {
-            consume(TokenType.IDENTIFIER, "Expect property name after '.'");
-            final name = identifier_constant(parser.previous!);
-            if (canAssign && match(TokenType.EQUAL)) {
-              expression();
-              emit_bytes(OpCode.SET_PROPERTY.index, name);
-            } else if (match(TokenType.LEFT_PAREN)) {
-              final argCount = argument_list();
-              emit_bytes(OpCode.INVOKE.index, name);
-              emit_byte(argCount);
-            } else {
-              emit_bytes(OpCode.GET_PROPERTY.index, name);
-            }
-          };
-        case TokenType.MINUS:
-          return parse_binary;
-        case TokenType.PLUS:
-          return parse_binary;
-        case TokenType.SEMICOLON:
-          return null;
-        case TokenType.SLASH:
-          return parse_binary;
-        case TokenType.STAR:
-          return parse_binary;
-        case TokenType.CARET:
-          return parse_binary;
-        case TokenType.PERCENT:
-          return parse_binary;
-        case TokenType.COLON:
-          return null;
-        case TokenType.BANG:
-          return null;
-        case TokenType.BANG_EQUAL:
-          return parse_binary;
-        case TokenType.EQUAL:
-          return null;
-        case TokenType.EQUAL_EQUAL:
-          return parse_binary;
-        case TokenType.GREATER:
-          return parse_binary;
-        case TokenType.GREATER_EQUAL:
-          return parse_binary;
-        case TokenType.LESS:
-          return parse_binary;
-        case TokenType.LESS_EQUAL:
-          return parse_binary;
-        case TokenType.IDENTIFIER:
-          return null;
-        case TokenType.STRING:
-          return null;
-        case TokenType.NUMBER:
-          return null;
-        case TokenType.OBJECT:
-          return null;
-        case TokenType.AND:
-          return (final bool canAssign) {
-            final endJump = emit_jump(OpCode.JUMP_IF_FALSE);
-            emit_op(OpCode.POP);
-            parse_precedence(Precedence.AND);
-            patch_jump(endJump);
-          };
-        case TokenType.CLASS:
-          return null;
-        case TokenType.ELSE:
-          return null;
-        case TokenType.FALSE:
-          return null;
-        case TokenType.FOR:
-          return null;
-        case TokenType.FUN:
-          return null;
-        case TokenType.IF:
-          return null;
-        case TokenType.NIL:
-          return null;
-        case TokenType.OR:
-          return (final bool canAssign) {
-            final elseJump = emit_jump(OpCode.JUMP_IF_FALSE);
-            final endJump = emit_jump(OpCode.JUMP);
-            patch_jump(elseJump);
-            emit_op(OpCode.POP);
-            parse_precedence(Precedence.OR);
-            patch_jump(endJump);
-          };
-        case TokenType.PRINT:
-          return null;
-        case TokenType.RETURN:
-          return null;
-        case TokenType.SUPER:
-          return null;
-        case TokenType.THIS:
-          return null;
-        case TokenType.TRUE:
-          return null;
-        case TokenType.VAR:
-          return null;
-        case TokenType.WHILE:
-          return null;
-        case TokenType.BREAK:
-          return null;
-        case TokenType.CONTINUE:
-          return null;
-        case TokenType.ERROR:
-          return null;
-        case TokenType.EOF:
-          return null;
-        // ignore: no_default_cases
-        default:
-          return null;
-      }
-    }
-
-    parser.advance();
-    final prefix_rule = get_prefix_rule(parser.previous!.type);
+    }();
     if (prefix_rule == null) {
       parser.error('Expect expression');
+      return null;
     } else {
-      final can_assign = precedence.index <= Precedence.ASSIGNMENT.index;
-      prefix_rule(can_assign);
+      // ignore: unused_local_variable
+      final prefix_expr = prefix_rule();
       while (precedence.index <= get_precedence(parser.current!.type).index) {
         parser.advance();
-        final infix_rule = get_infix_rule(parser.previous!.type);
-        if (infix_rule != null) {
-          infix_rule(can_assign);
-        } else {
-          throw Exception("Invalid State");
-        }
+        // ignore: unused_local_variable
+        final infix_expr = () {
+          switch (parser.previous!.type) {
+            case TokenType.LEFT_PAREN:
+              final args = argument_list();
+              emit_bytes(OpCode.CALL.index, args.length);
+              return ExprCall(
+                args: args,
+              );
+            case TokenType.LEFT_BRACK:
+              bool get_range = match(TokenType.COLON);
+              // Left hand side operand
+              if (get_range) {
+                emit_constant(Nil);
+              } else {
+                expression();
+                get_range = match(TokenType.COLON);
+              }
+              // Right hand side operand
+              if (match(TokenType.RIGHT_BRACK)) {
+                if (get_range) {
+                  emit_constant(Nil);
+                }
+              } else {
+                if (get_range) {
+                  expression();
+                }
+                parser.consume(TokenType.RIGHT_BRACK, "Expect ']' after list indexing");
+              }
+              // Emit operation
+              if (get_range) {
+                emit_op(OpCode.CONTAINER_GET_RANGE);
+              } else if (can_assign && match(TokenType.EQUAL)) {
+                expression();
+                emit_op(OpCode.CONTAINER_SET);
+              } else {
+                emit_op(OpCode.CONTAINER_GET);
+              }
+              break;
+            case TokenType.DOT:
+              parser.consume(TokenType.IDENTIFIER, "Expect property name after '.'");
+              final name_token = parser.previous!;
+              final name = identifier_constant(name_token);
+              if (can_assign && match(TokenType.EQUAL)) {
+                final expr = expression();
+                emit_bytes(OpCode.SET_PROPERTY.index, name);
+                return ExprSet(arg: expr, name: name_token);
+              } else if (match(TokenType.LEFT_PAREN)) {
+                final args = argument_list();
+                emit_bytes(OpCode.INVOKE.index, name);
+                emit_byte(args.length);
+                return ExprInvoke(args: args, name: name_token);
+              } else {
+                emit_bytes(OpCode.GET_PROPERTY.index, name);
+                return ExprGet(name: name_token);
+              }
+            case TokenType.MINUS:
+              parse_precedence(get_next_precedence(TokenType.MINUS));
+              emit_op(OpCode.SUBTRACT);
+              break;
+            case TokenType.PLUS:
+              parse_precedence(get_next_precedence(TokenType.PLUS));
+              emit_op(OpCode.ADD);
+              break;
+            case TokenType.SLASH:
+              parse_precedence(get_next_precedence(TokenType.SLASH));
+              emit_op(OpCode.DIVIDE);
+              break;
+            case TokenType.STAR:
+              parse_precedence(get_next_precedence(TokenType.STAR));
+              emit_op(OpCode.MULTIPLY);
+              break;
+            case TokenType.CARET:
+              parse_precedence(get_next_precedence(TokenType.CARET));
+              emit_op(OpCode.POW);
+              break;
+            case TokenType.PERCENT:
+              parse_precedence(get_next_precedence(TokenType.PERCENT));
+              emit_op(OpCode.MOD);
+              break;
+            case TokenType.BANG_EQUAL:
+              parse_precedence(get_next_precedence(TokenType.BANG_EQUAL));
+              emit_bytes(OpCode.EQUAL.index, OpCode.NOT.index);
+              break;
+            case TokenType.EQUAL_EQUAL:
+              parse_precedence(get_next_precedence(TokenType.EQUAL_EQUAL));
+              emit_op(OpCode.EQUAL);
+              break;
+            case TokenType.GREATER:
+              parse_precedence(get_next_precedence(TokenType.GREATER));
+              emit_op(OpCode.GREATER);
+              break;
+            case TokenType.GREATER_EQUAL:
+              parse_precedence(get_next_precedence(TokenType.GREATER_EQUAL));
+              emit_bytes(OpCode.LESS.index, OpCode.NOT.index);
+              break;
+            case TokenType.LESS:
+              parse_precedence(get_next_precedence(TokenType.LESS));
+              emit_op(OpCode.LESS);
+              break;
+            case TokenType.LESS_EQUAL:
+              parse_precedence(get_next_precedence(TokenType.LESS_EQUAL));
+              emit_bytes(OpCode.GREATER.index, OpCode.NOT.index);
+              break;
+            case TokenType.AND:
+              final end_jump = emit_jump(OpCode.JUMP_IF_FALSE);
+              emit_op(OpCode.POP);
+              parse_precedence(get_precedence(TokenType.AND));
+              patch_jump(end_jump);
+              break;
+            case TokenType.OR:
+              final else_jump = emit_jump(OpCode.JUMP_IF_FALSE);
+              final end_jump = emit_jump(OpCode.JUMP);
+              patch_jump(else_jump);
+              emit_op(OpCode.POP);
+              parse_precedence(get_precedence(TokenType.OR));
+              patch_jump(end_jump);
+              break;
+            // ignore: no_default_cases
+            default:
+              throw Exception("Invalid State");
+          }
+        }();
       }
       if (can_assign && match(TokenType.EQUAL)) {
         parser.error('Invalid assignment target');
@@ -1075,17 +770,6 @@ mixin CompilerMixin {
     return Expr();
   }
 
-  Block block() {
-    final decls = <Declaration>[];
-    while (!parser.check(TokenType.RIGHT_BRACE) && !parser.check(TokenType.EOF)) {
-      decls.add(declaration());
-    }
-    consume(TokenType.RIGHT_BRACE, 'Unterminated block');
-    return Block(
-      decls: decls,
-    );
-  }
-
   Declaration declaration() {
     void begin_scope() {
       scope_depth++;
@@ -1094,7 +778,7 @@ mixin CompilerMixin {
     void end_scope() {
       scope_depth--;
       while (locals.isNotEmpty && locals.last.depth > scope_depth) {
-        if (locals.last.isCaptured) {
+        if (locals.last.is_captured) {
           emit_op(OpCode.CLOSE_UPVALUE);
         } else {
           emit_op(OpCode.POP);
@@ -1104,73 +788,97 @@ mixin CompilerMixin {
     }
 
     DeclarationVari var_declaration() {
+      final exprs = <Expr>[];
       do {
         final global = parse_variable('Expect variable name');
         final token = parser.previous;
         if (match(TokenType.EQUAL)) {
-          expression();
+          exprs.add(expression());
         } else {
           emit_op(OpCode.NIL);
         }
         define_variable(global, token: token);
       } while (match(TokenType.COMMA));
-      consume(TokenType.SEMICOLON, 'Expect a newline after variable declaration');
-      return const DeclarationVari();
+      parser.consume(TokenType.SEMICOLON, 'Expect a newline after variable declaration');
+      return DeclarationVari(
+        exprs: exprs,
+      );
     }
 
     Stmt statement() {
-      Expr expressionStatement() {
-        final expr = expression();
-        consume(TokenType.SEMICOLON, 'Expect a newline after expression');
-        emit_op(OpCode.POP);
-        return expr;
-      }
-
       if (match(TokenType.PRINT)) {
         // print statement
-        expression();
-        consume(TokenType.SEMICOLON, 'Expect a newline after value');
+        final expr = expression();
+        parser.consume(TokenType.SEMICOLON, 'Expect a newline after value');
         emit_op(OpCode.PRINT);
-        return const StmtOutput();
+        return StmtOutput(
+          expr: expr,
+        );
       } else if (match(TokenType.FOR)) {
         // for statement check
         if (match(TokenType.LEFT_PAREN)) {
           // legacy for statement
           // Deprecated
           begin_scope();
-          // consume(TokenType.LEFT_PAREN, "Expect '(' after 'for'");
-          if (match(TokenType.SEMICOLON)) {
-            // No initializer.
-          } else if (match(TokenType.VAR)) {
-            var_declaration();
-          } else {
-            expressionStatement();
-          }
-          var loopStart = current_chunk.count;
-          var exitJump = -1;
-          if (!match(TokenType.SEMICOLON)) {
-            expression();
-            consume(TokenType.SEMICOLON, "Expect ';' after loop condition");
-            exitJump = emit_jump(OpCode.JUMP_IF_FALSE);
-            emit_op(OpCode.POP); // Condition.
-          }
-          if (!match(TokenType.RIGHT_PAREN)) {
-            final bodyJump = emit_jump(OpCode.JUMP);
-            final incrementStart = current_chunk.count;
-            expression();
-            emit_op(OpCode.POP);
-            consume(TokenType.RIGHT_PAREN, "Expect ')' after for clauses");
-            emit_loop(loopStart);
-            loopStart = incrementStart;
-            patch_jump(bodyJump);
-          }
-          statement();
-          emit_loop(loopStart);
-          if (exitJump != -1) {
-            patch_jump(exitJump);
+          final left = () {
+            if (match(TokenType.SEMICOLON)) {
+              // No initializer.
+              return null;
+            } else if (match(TokenType.VAR)) {
+              final decl = var_declaration();
+              return LoopLeftVari(
+                decl: decl,
+              );
+            } else {
+              final expr = expression();
+              parser.consume(TokenType.SEMICOLON, 'Expect a newline after expression');
+              emit_op(OpCode.POP);
+              return LoopLeftExpr(
+                expr: expr,
+              );
+            }
+          }();
+          int loop_start = current_chunk.count;
+          int exit_jump = -1;
+          final center = () {
+            if (!match(TokenType.SEMICOLON)) {
+              final expr = expression();
+              parser.consume(TokenType.SEMICOLON, "Expect ';' after loop condition");
+              exit_jump = emit_jump(OpCode.JUMP_IF_FALSE);
+              emit_op(OpCode.POP); // Condition.
+              return expr;
+            } else {
+              return null;
+            }
+          }();
+          final right = () {
+            if (!match(TokenType.RIGHT_PAREN)) {
+              final body_jump = emit_jump(OpCode.JUMP);
+              final increment_start = current_chunk.count;
+              final expr = expression();
+              emit_op(OpCode.POP);
+              parser.consume(TokenType.RIGHT_PAREN, "Expect ')' after for clauses");
+              emit_loop(loop_start);
+              loop_start = increment_start;
+              patch_jump(body_jump);
+              return expr;
+            } else {
+              return null;
+            }
+          }();
+          final stmt = statement();
+          emit_loop(loop_start);
+          if (exit_jump != -1) {
+            patch_jump(exit_jump);
             emit_op(OpCode.POP); // Condition.
           }
           end_scope();
+          return StmtLoop(
+            left: left,
+            center: center,
+            right: right,
+            body: stmt,
+          );
         } else {
           // for statement
           begin_scope();
@@ -1178,7 +886,7 @@ mixin CompilerMixin {
           parse_variable('Expect variable name'); // Streamline those operations
           emit_op(OpCode.NIL);
           define_variable(0, token: parser.previous); // Remove 0
-          final stackIdx = locals.length - 1;
+          final stack_idx = locals.length - 1;
           if (match(TokenType.COMMA)) {
             // Value variable
             parse_variable('Expect variable name');
@@ -1198,72 +906,83 @@ mixin CompilerMixin {
           emit_op(OpCode.NIL);
           mark_local_variable_initialized();
           // Rest of the loop
-          consume(TokenType.IN, "Expect 'in' after loop variables");
-          expression(); // Iterable
+          parser.consume(TokenType.IN, "Expect 'in' after loop variables");
+          final condition = expression(); // Iterable
           // Iterator
-          final loopStart = current_chunk.count;
-          emit_bytes(OpCode.CONTAINER_ITERATE.index, stackIdx);
-          final exitJump = emit_jump(OpCode.JUMP_IF_FALSE);
+          final loop_start = current_chunk.count;
+          emit_bytes(OpCode.CONTAINER_ITERATE.index, stack_idx);
+          final exit_jump = emit_jump(OpCode.JUMP_IF_FALSE);
           emit_op(OpCode.POP); // Condition
           // Body
-          statement();
-          emit_loop(loopStart);
+          final body = statement();
+          emit_loop(loop_start);
           // Exit
-          patch_jump(exitJump);
+          patch_jump(exit_jump);
           emit_op(OpCode.POP); // Condition
           end_scope();
+          return StmtLoop2(
+            center: condition,
+            body: body,
+          );
         }
-        return const StmtLoop();
       } else if (match(TokenType.IF)) {
         // if statement
-        // consume(TokenType.LEFT_PAREN, "Expect '(' after 'if'");
-        expression();
-        // consume(TokenType.RIGHT_PAREN, "Expect ')' after condition"); // [paren]
-        final thenJump = emit_jump(OpCode.JUMP_IF_FALSE);
+        final expr = expression();
+        final then_jump = emit_jump(OpCode.JUMP_IF_FALSE);
         emit_op(OpCode.POP);
-        statement();
-        final elseJump = emit_jump(OpCode.JUMP);
-        patch_jump(thenJump);
+        final stmt = statement();
+        final else_jump = emit_jump(OpCode.JUMP);
+        patch_jump(then_jump);
         emit_op(OpCode.POP);
         if (match(TokenType.ELSE)) statement();
-        patch_jump(elseJump);
-        return const StmtConditional();
+        patch_jump(else_jump);
+        return StmtConditional(
+          expr: expr,
+          stmt: stmt,
+        );
       } else if (match(TokenType.RETURN)) {
-        // return statement
-        // if (type == FunctionType.SCRIPT) {
-        //   parser.error("Can't return from top-level code");
-        // }
         if (match(TokenType.SEMICOLON)) {
           emit_return();
+          return const StmtRet(
+            expr: null,
+          );
         } else {
           if (type == FunctionType.INITIALIZER) {
             parser.error("Can't return a value from an initializer");
           }
-          expression();
-          consume(TokenType.SEMICOLON, 'Expect a newline after return value');
+          final expr = expression();
+          parser.consume(TokenType.SEMICOLON, 'Expect a newline after return value');
           emit_op(OpCode.RETURN);
+          return StmtRet(
+            expr: expr,
+          );
         }
-        return const StmtRet();
       } else if (match(TokenType.WHILE)) {
-        final loopStart = current_chunk.count;
-        // consume(TokenType.LEFT_PAREN, "Expect '(' after 'while'");
-        expression();
-        // consume(TokenType.RIGHT_PAREN, "Expect ')' after condition");
-        final exitJump = emit_jump(OpCode.JUMP_IF_FALSE);
+        final loop_start = current_chunk.count;
+        final expr = expression();
+        final exit_jump = emit_jump(OpCode.JUMP_IF_FALSE);
         emit_op(OpCode.POP);
-        statement();
-        emit_loop(loopStart);
-        patch_jump(exitJump);
+        final stmt = statement();
+        emit_loop(loop_start);
+        patch_jump(exit_jump);
         emit_op(OpCode.POP);
-        return const StmtWhil();
+        return StmtWhil(
+          expr: expr,
+          stmt: stmt,
+        );
       } else if (match(TokenType.LEFT_BRACE)) {
         begin_scope();
-        block();
+        final block = parser.block(declaration);
         end_scope();
-        return const StmtBlock();
+        return StmtBlock(
+          block: block,
+        );
       } else {
+        final expr = expression();
+        parser.consume(TokenType.SEMICOLON, 'Expect a newline after expression');
+        emit_op(OpCode.POP);
         return StmtExpr(
-          expr: expressionStatement(),
+          expr: expr,
         );
       }
     }
@@ -1271,19 +990,22 @@ mixin CompilerMixin {
     Block function_block(
       final FunctionType type,
     ) {
-      final compiler = CompilerWrapped(type, enclosing: this);
+      final compiler = CompilerWrapped(
+        type: type,
+        enclosing: this,
+      );
       // beginScope(); // [no-end-scope]
       // not needed because of wrapped compiler scope propagation
 
       // Compile the parameter list.
       // final functionToken = parser.previous;
-      compiler.consume(TokenType.LEFT_PAREN, "Expect '(' after function name");
+      compiler.parser.consume(TokenType.LEFT_PAREN, "Expect '(' after function name");
       final args = <NaturalToken?>[];
       if (!compiler.parser.check(TokenType.RIGHT_PAREN)) {
         do {
-          compiler.function!.arity++;
-          if (compiler.function!.arity > 255) {
-            compiler.parser.errorAtCurrent("Can't have more than 255 parameters");
+          compiler.function.arity++;
+          if (compiler.function.arity > 255) {
+            compiler.parser.error_at_current("Can't have more than 255 parameters");
           }
           compiler.parse_variable('Expect parameter name');
           compiler.mark_local_variable_initialized();
@@ -1291,17 +1013,17 @@ mixin CompilerMixin {
         } while (compiler.match(TokenType.COMMA));
       }
       for (var k = 0; k < args.length; k++) {
-        compiler.define_variable(0, token: args[k], peekDist: args.length - 1 - k);
+        compiler.define_variable(0, token: args[k], peek_dist: args.length - 1 - k);
       }
-      compiler.consume(TokenType.RIGHT_PAREN, "Expect ')' after parameters");
+      compiler.parser.consume(TokenType.RIGHT_PAREN, "Expect ')' after parameters");
       // The body.
-      compiler.consume(TokenType.LEFT_BRACE, 'Expect function body');
-      final block = compiler.block();
+      compiler.parser.consume(TokenType.LEFT_BRACE, 'Expect function body');
+      final block = compiler.parser.block(compiler.declaration);
       // Create the function object.
       final function = compiler.end_compiler();
       emit_bytes(OpCode.CLOSURE.index, make_constant(function));
       for (var i = 0; i < compiler.upvalues.length; i++) {
-        emit_byte(compiler.upvalues[i].isLocal ? 1 : 0);
+        emit_byte(compiler.upvalues[i].is_local ? 1 : 0);
         emit_byte(compiler.upvalues[i].index);
       }
       return block;
@@ -1310,44 +1032,44 @@ mixin CompilerMixin {
     final Declaration decl = () {
       if (match(TokenType.CLASS)) {
         // class declaration
-        consume(TokenType.IDENTIFIER, 'Expect class name');
-        final className = parser.previous;
-        final nameConstant = identifier_constant(parser.previous!);
+        parser.consume(TokenType.IDENTIFIER, 'Expect class name');
+        final class_name = parser.previous;
+        final name_constant = identifier_constant(parser.previous!);
         delare_local_variable();
-        emit_bytes(OpCode.CLASS.index, nameConstant);
-        define_variable(nameConstant);
-        final classCompiler = ClassCompiler(current_class, parser.previous, false);
-        current_class = classCompiler;
+        emit_bytes(OpCode.CLASS.index, name_constant);
+        define_variable(name_constant);
+        final class_compiler = ClassCompiler(current_class, parser.previous, false);
+        current_class = class_compiler;
         if (match(TokenType.LESS)) {
-          consume(TokenType.IDENTIFIER, 'Expect superclass name');
+          parser.consume(TokenType.IDENTIFIER, 'Expect superclass name');
           get_or_set_variable(parser.previous, false);
-          if (identifiers_equal(className!, parser.previous!)) {
+          if (identifiers_equal(class_name!, parser.previous!)) {
             parser.error("A class can't inherit from itself");
           }
           begin_scope();
           add_local(synthetic_token('super'));
           define_variable(0);
-          get_or_set_variable(className, false);
+          get_or_set_variable(class_name, false);
           emit_op(OpCode.INHERIT);
-          classCompiler.hasSuperclass = true;
+          class_compiler.has_superclass = true;
         }
-        get_or_set_variable(className, false);
-        consume(TokenType.LEFT_BRACE, 'Expect class body');
+        get_or_set_variable(class_name, false);
+        parser.consume(TokenType.LEFT_BRACE, 'Expect class body');
         while (!parser.check(TokenType.RIGHT_BRACE) && !parser.check(TokenType.EOF)) {
           // parse method
-          consume(TokenType.IDENTIFIER, 'Expect method name');
+          parser.consume(TokenType.IDENTIFIER, 'Expect method name');
           final identifier = parser.previous!;
           final constant = identifier_constant(identifier);
-          var type = FunctionType.METHOD;
+          FunctionType type = FunctionType.METHOD;
           if (identifier.str == 'init') {
             type = FunctionType.INITIALIZER;
           }
           function_block(type);
           emit_bytes(OpCode.METHOD.index, constant);
         }
-        consume(TokenType.RIGHT_BRACE, 'Unterminated class body');
+        parser.consume(TokenType.RIGHT_BRACE, 'Unterminated class body');
         emit_op(OpCode.POP);
-        if (classCompiler.hasSuperclass) {
+        if (class_compiler.has_superclass) {
           end_scope();
         }
         current_class = current_class!.enclosing;
@@ -1408,13 +1130,13 @@ const UINT16_MAX = 65535;
 class Local {
   final SyntheticToken? name;
   int depth;
-  bool isCaptured = false;
+  bool is_captured = false;
 
   Local(
-      final this.name, {
-        final this.depth = -1,
-        final this.isCaptured = false,
-      });
+    final this.name, {
+    final this.depth = -1,
+    final this.is_captured = false,
+  });
 
   bool get initialized {
     return depth >= 0;
@@ -1424,13 +1146,13 @@ class Local {
 class Upvalue {
   final SyntheticToken? name;
   final int index;
-  final bool isLocal;
+  final bool is_local;
 
   const Upvalue(
-      final this.name,
-      final this.index,
-      final this.isLocal,
-      );
+    final this.name,
+    final this.index,
+    final this.is_local,
+  );
 }
 
 enum FunctionType {
@@ -1443,25 +1165,25 @@ enum FunctionType {
 class ClassCompiler {
   final ClassCompiler? enclosing;
   final NaturalToken? name;
-  bool hasSuperclass;
+  bool has_superclass;
 
   ClassCompiler(
-      final this.enclosing,
-      final this.name,
-      final this.hasSuperclass,
-      );
+    final this.enclosing,
+    final this.name,
+    final this.has_superclass,
+  );
 }
 
 class CompilerResult {
-  final ObjFunction? function;
+  final ObjFunction function;
   final List<CompilerError> errors;
   final Debug? debug;
 
   const CompilerResult(
-      final this.function,
-      final this.errors,
-      final this.debug,
-      );
+    final this.function,
+    final this.errors,
+    final this.debug,
+  );
 }
 // endregion
 
@@ -1479,12 +1201,14 @@ class Parser {
   Parser(
     this.tokens, {
     final bool silent = false,
-  })  : debug = Debug(silent),
+  })  : debug = Debug(
+          silent: silent,
+        ),
         errors = [],
         current_idx = 0,
         panic_mode = false;
 
-  void errorAt(
+  void error_at(
     final NaturalToken? token,
     final String? message,
   ) {
@@ -1498,12 +1222,16 @@ class Parser {
     }
   }
 
-  void error(final String message) {
-    errorAt(previous, message);
+  void error(
+    final String message,
+  ) {
+    error_at(previous, message);
   }
 
-  void errorAtCurrent(final String? message) {
-    errorAt(current, message);
+  void error_at_current(
+    final String? message,
+  ) {
+    error_at(current, message);
   }
 
   void advance() {
@@ -1513,26 +1241,34 @@ class Parser {
       current = tokens[current_idx++];
       // Skip invalid tokens
       if (current!.type == TokenType.ERROR) {
-        errorAtCurrent(current!.str);
+        error_at_current(current!.str);
       } else if (current!.type != TokenType.COMMENT) {
         break;
       }
     }
   }
 
-  void consume(final TokenType type, final String message) {
+  void consume(
+    final TokenType type,
+    final String message,
+  ) {
     if (current!.type == type) {
       advance();
     } else {
-      errorAtCurrent(message);
+      error_at_current(message);
     }
   }
 
-  bool check(final TokenType type) {
+  bool check(
+    final TokenType type,
+  ) {
     return current!.type == type;
   }
 
-  bool matchPair(final TokenType first, final TokenType second) {
+  bool matchPair(
+    final TokenType first,
+    final TokenType second,
+  ) {
     if (!check(first) || current_idx >= tokens.length || tokens[current_idx].type != second) {
       return false;
     } else {
@@ -1542,14 +1278,31 @@ class Parser {
     }
   }
 
-  bool match(final TokenType type) {
-    if (!check(type)) {
-      return false;
-    } else {
+  bool match(
+    final TokenType type,
+  ) {
+    if (check(type)) {
       advance();
       return true;
+    } else {
+      return false;
     }
   }
+
+  // region values
+  Block block(
+    final Declaration Function() declaration,
+  ) {
+    final decls = <Declaration>[];
+    while (!check(TokenType.RIGHT_BRACE) && !check(TokenType.EOF)) {
+      decls.add(declaration());
+    }
+    consume(TokenType.RIGHT_BRACE, 'Unterminated block');
+    return Block(
+      decls: decls,
+    );
+  }
+// endregion
 }
 
 enum Precedence {
@@ -1565,6 +1318,119 @@ enum Precedence {
   UNARY, // ! -
   CALL, // . ()
   PRIMARY,
+}
+
+Precedence get_precedence(
+  final TokenType type,
+) {
+  switch (type) {
+    case TokenType.LEFT_PAREN:
+      return Precedence.CALL;
+    case TokenType.RIGHT_PAREN:
+      return Precedence.NONE;
+    case TokenType.LEFT_BRACE:
+      return Precedence.NONE;
+    case TokenType.RIGHT_BRACE:
+      return Precedence.NONE;
+    case TokenType.LEFT_BRACK:
+      return Precedence.CALL;
+    case TokenType.RIGHT_BRACK:
+      return Precedence.NONE;
+    case TokenType.COMMA:
+      return Precedence.NONE;
+    case TokenType.DOT:
+      return Precedence.CALL;
+    case TokenType.MINUS:
+      return Precedence.TERM;
+    case TokenType.PLUS:
+      return Precedence.TERM;
+    case TokenType.SEMICOLON:
+      return Precedence.NONE;
+    case TokenType.SLASH:
+      return Precedence.FACTOR;
+    case TokenType.STAR:
+      return Precedence.FACTOR;
+    case TokenType.CARET:
+      return Precedence.POWER;
+    case TokenType.PERCENT:
+      return Precedence.FACTOR;
+    case TokenType.COLON:
+      return Precedence.NONE;
+    case TokenType.BANG:
+      return Precedence.NONE;
+    case TokenType.BANG_EQUAL:
+      return Precedence.EQUALITY;
+    case TokenType.EQUAL:
+      return Precedence.NONE;
+    case TokenType.EQUAL_EQUAL:
+      return Precedence.EQUALITY;
+    case TokenType.GREATER:
+      return Precedence.COMPARISON;
+    case TokenType.GREATER_EQUAL:
+      return Precedence.COMPARISON;
+    case TokenType.LESS:
+      return Precedence.COMPARISON;
+    case TokenType.LESS_EQUAL:
+      return Precedence.COMPARISON;
+    case TokenType.IDENTIFIER:
+      return Precedence.NONE;
+    case TokenType.STRING:
+      return Precedence.NONE;
+    case TokenType.NUMBER:
+      return Precedence.NONE;
+    case TokenType.OBJECT:
+      return Precedence.NONE;
+    case TokenType.AND:
+      return Precedence.AND;
+    case TokenType.CLASS:
+      return Precedence.NONE;
+    case TokenType.ELSE:
+      return Precedence.NONE;
+    case TokenType.FALSE:
+      return Precedence.NONE;
+    case TokenType.FOR:
+      return Precedence.NONE;
+    case TokenType.FUN:
+      return Precedence.NONE;
+    case TokenType.IF:
+      return Precedence.NONE;
+    case TokenType.NIL:
+      return Precedence.NONE;
+    case TokenType.OR:
+      return Precedence.OR;
+    case TokenType.PRINT:
+      return Precedence.NONE;
+    case TokenType.RETURN:
+      return Precedence.NONE;
+    case TokenType.SUPER:
+      return Precedence.NONE;
+    case TokenType.THIS:
+      return Precedence.NONE;
+    case TokenType.TRUE:
+      return Precedence.NONE;
+    case TokenType.VAR:
+      return Precedence.NONE;
+    case TokenType.WHILE:
+      return Precedence.NONE;
+    case TokenType.BREAK:
+      return Precedence.NONE;
+    case TokenType.CONTINUE:
+      return Precedence.NONE;
+    case TokenType.ERROR:
+      return Precedence.NONE;
+    case TokenType.EOF:
+      return Precedence.NONE;
+    case TokenType.IN:
+      return Precedence.NONE;
+    case TokenType.COMMENT:
+      return Precedence.NONE;
+  }
+}
+
+Precedence get_next_precedence(
+  final TokenType type,
+) {
+  return Precedence.values[get_precedence(type).index + 1];
 }
 // endregion
 
@@ -1684,7 +1550,7 @@ class ListNode extends ObjNativeClass {
     for (var k = 0; k < list.length; k++) {
       final val = list[k]!.val;
       if (k > 0) str.write(' → '); // TODO: find utf-16 arrow →; test on iOS
-      str.write(val == null ? '⮐' : valueToString(val, maxChars: maxChars - str.length));
+      str.write(val == null ? '⮐' : value_to_string(val, maxChars: maxChars - str.length));
       if (str.length > maxChars) {
         str.write('...');
         break;
@@ -2023,7 +1889,9 @@ class ObjBoundMethod {
   ObjBoundMethod(this.receiver, this.method);
 }
 
-int hashString(final String key) {
+int hashString(
+  final String key,
+) {
   var hash = 2166136261;
   for (var i = 0; i < key.length; i++) {
     hash ^= key.codeUnitAt(i);
@@ -2032,7 +1900,9 @@ int hashString(final String key) {
   return hash;
 }
 
-String functionToString(final ObjFunction function) {
+String functionToString(
+  final ObjFunction function,
+) {
   if (function.name == null) {
     return '<script>';
   }
@@ -2043,7 +1913,10 @@ void printObject(final Object value) {
   print(objectToString(value));
 }
 
-String? objectToString(final Object? value, {final int maxChars = 100}) {
+String? objectToString(
+  final Object? value, {
+  final int maxChars = 100,
+}) {
   if (value is ObjClass) {
     return value.name;
   } else if (value is ObjBoundMethod) {
@@ -2075,9 +1948,16 @@ class LangError {
   int? line;
   final String? msg;
 
-  LangError(this.type, this.msg, {this.line, this.token});
+  LangError(
+    final this.type,
+    final this.msg, {
+    final this.line,
+    final this.token,
+  });
 
-  void dump(final Debug debug) {
+  void dump(
+    final Debug debug,
+  ) {
     debug.stdwriteln(toString());
   }
 
@@ -2104,23 +1984,40 @@ class LangError {
 }
 
 class CompilerError extends LangError {
-  CompilerError(final NaturalToken token, final String? msg)
-      : super('Compile', msg, token: token, line: token.loc.line);
+  CompilerError(
+    final NaturalToken token,
+    final String? msg,
+  ) : super(
+          'Compile',
+          msg,
+          token: token,
+          line: token.loc.line,
+        );
 }
 
 class RuntimeError extends LangError {
   final RuntimeError? link;
 
-  RuntimeError(final int line, final String? msg, {this.link}) : super('Runtime', msg, line: line);
+  RuntimeError(
+    final int line,
+    final String? msg, {
+    this.link,
+  }) : super(
+          'Runtime',
+          msg,
+          line: line,
+        );
 }
 // endregion
 
 // region debug
 class Debug {
   final bool silent;
-  final buf = StringBuffer();
+  final StringBuffer buf;
 
-  Debug(this.silent);
+  Debug({
+    required final this.silent,
+  }) : buf = StringBuffer();
 
   String clear() {
     final str = buf.toString();
@@ -2128,7 +2025,9 @@ class Debug {
     return str;
   }
 
-  void stdwrite(final String? string) {
+  void stdwrite(
+    final String? string,
+  ) {
     buf.write(string);
     if (!silent) {
       // Print buffer
@@ -2142,65 +2041,100 @@ class Debug {
     }
   }
 
-  void stdwriteln([final String? string]) {
+  void stdwriteln([
+    final String? string,
+  ]) {
     return stdwrite((string ?? '') + '\n');
   }
 
-  void printValue(final Object? value) {
-    stdwrite(valueToString(value));
+  void print_value(
+    final Object? value,
+  ) {
+    stdwrite(value_to_string(value));
   }
 
-  void disassembleChunk(final Chunk chunk, final String name) {
+  void disassemble_chunk(
+    final Chunk chunk,
+    final String name,
+  ) {
     stdwrite("==" + name + "==\n");
     int? prevLine = -1;
     for (var offset = 0; offset < chunk.code.length;) {
-      offset = disassembleInstruction(prevLine, chunk, offset);
+      offset = disassemble_instruction(prevLine, chunk, offset);
       prevLine = offset > 0 ? chunk.lines[offset - 1] : null;
     }
   }
 
-  int constantInstruction(final String name, final Chunk chunk, final int offset) {
+  int constant_instruction(
+    final String name,
+    final Chunk chunk,
+    final int offset,
+  ) {
     final constant = chunk.code[offset + 1];
     stdwrite(sprintf('%-16s %4d \'', [name, constant]));
-    printValue(chunk.constants[constant]);
+    print_value(chunk.constants[constant]);
     stdwrite('\'\n');
     return offset + 2;
   }
 
-  int initializerListInstruction(final String name, final Chunk chunk, final int offset) {
+  int initializer_list_instruction(
+    final String name,
+    final Chunk chunk,
+    final int offset,
+  ) {
     final nArgs = chunk.code[offset + 1];
     stdwriteln(sprintf('%-16s %4d', [name, nArgs]));
     return offset + 2;
   }
 
-  int invokeInstruction(final String name, final Chunk chunk, final int offset) {
+  int invoke_instruction(
+    final String name,
+    final Chunk chunk,
+    final int offset,
+  ) {
     final constant = chunk.code[offset + 1];
     final argCount = chunk.code[offset + 2];
     stdwrite(sprintf('%-16s (%d args) %4d \'', [name, argCount, constant]));
-    printValue(chunk.constants[constant]);
+    print_value(chunk.constants[constant]);
     stdwrite('\'\n');
     return offset + 3;
   }
 
-  int simpleInstruction(final String name, final int offset) {
+  int simple_instruction(
+    final String name,
+    final int offset,
+  ) {
     stdwrite(sprintf('%s\n', [name]));
     return offset + 1;
   }
 
-  int byteInstruction(final String name, final Chunk chunk, final int offset) {
+  int byte_instruction(
+    final String name,
+    final Chunk chunk,
+    final int offset,
+  ) {
     final slot = chunk.code[offset + 1];
     stdwrite(sprintf('%-16s %4d\n', [name, slot]));
     return offset + 2; // [debug]
   }
 
-  int jumpInstruction(final String name, final int sign, final Chunk chunk, final int offset) {
+  int jump_instruction(
+    final String name,
+    final int sign,
+    final Chunk chunk,
+    final int offset,
+  ) {
     var jump = chunk.code[offset + 1] << 8;
     jump |= chunk.code[offset + 2];
     stdwrite(sprintf('%-16s %4d -> %d\n', [name, offset, offset + 3 + sign * jump]));
     return offset + 3;
   }
 
-  int disassembleInstruction(final int? prevLine, final Chunk chunk, int offset) {
+  int disassemble_instruction(
+    final int? prevLine,
+    final Chunk chunk,
+    int offset,
+  ) {
     stdwrite(sprintf('%04d ', [offset]));
     final i = chunk.lines[offset];
     // stdwrite("${chunk.trace[offset].token.info} "); // temp
@@ -2210,119 +2144,115 @@ class Debug {
     } else {
       stdwrite(sprintf('%4d ', [i]));
     }
-
     final instruction = chunk.code[offset];
     switch (OpCode.values[instruction]) {
       case OpCode.CONSTANT:
-        return constantInstruction('OP_CONSTANT', chunk, offset);
+        return constant_instruction('OP_CONSTANT', chunk, offset);
       case OpCode.NIL:
-        return simpleInstruction('OP_NIL', offset);
+        return simple_instruction('OP_NIL', offset);
       case OpCode.TRUE:
-        return simpleInstruction('OP_TRUE', offset);
+        return simple_instruction('OP_TRUE', offset);
       case OpCode.FALSE:
-        return simpleInstruction('OP_FALSE', offset);
+        return simple_instruction('OP_FALSE', offset);
       case OpCode.POP:
-        return simpleInstruction('OP_POP', offset);
+        return simple_instruction('OP_POP', offset);
       case OpCode.GET_LOCAL:
-        return byteInstruction('OP_GET_LOCAL', chunk, offset);
+        return byte_instruction('OP_GET_LOCAL', chunk, offset);
       case OpCode.SET_LOCAL:
-        return byteInstruction('OP_SET_LOCAL', chunk, offset);
+        return byte_instruction('OP_SET_LOCAL', chunk, offset);
       case OpCode.GET_GLOBAL:
-        return constantInstruction('OP_GET_GLOBAL', chunk, offset);
+        return constant_instruction('OP_GET_GLOBAL', chunk, offset);
       case OpCode.DEFINE_GLOBAL:
-        return constantInstruction('OP_DEFINE_GLOBAL', chunk, offset);
+        return constant_instruction('OP_DEFINE_GLOBAL', chunk, offset);
       case OpCode.SET_GLOBAL:
-        return constantInstruction('OP_SET_GLOBAL', chunk, offset);
+        return constant_instruction('OP_SET_GLOBAL', chunk, offset);
       case OpCode.GET_UPVALUE:
-        return byteInstruction('OP_GET_UPVALUE', chunk, offset);
+        return byte_instruction('OP_GET_UPVALUE', chunk, offset);
       case OpCode.SET_UPVALUE:
-        return byteInstruction('OP_SET_UPVALUE', chunk, offset);
+        return byte_instruction('OP_SET_UPVALUE', chunk, offset);
       case OpCode.GET_PROPERTY:
-        return constantInstruction('OP_GET_PROPERTY', chunk, offset);
+        return constant_instruction('OP_GET_PROPERTY', chunk, offset);
       case OpCode.SET_PROPERTY:
-        return constantInstruction('OP_SET_PROPERTY', chunk, offset);
+        return constant_instruction('OP_SET_PROPERTY', chunk, offset);
       case OpCode.GET_SUPER:
-        return constantInstruction('OP_GET_SUPER', chunk, offset);
+        return constant_instruction('OP_GET_SUPER', chunk, offset);
       case OpCode.EQUAL:
-        return simpleInstruction('OP_EQUAL', offset);
+        return simple_instruction('OP_EQUAL', offset);
       case OpCode.GREATER:
-        return simpleInstruction('OP_GREATER', offset);
+        return simple_instruction('OP_GREATER', offset);
       case OpCode.LESS:
-        return simpleInstruction('OP_LESS', offset);
+        return simple_instruction('OP_LESS', offset);
       case OpCode.ADD:
-        return simpleInstruction('OP_ADD', offset);
+        return simple_instruction('OP_ADD', offset);
       case OpCode.SUBTRACT:
-        return simpleInstruction('OP_SUBTRACT', offset);
+        return simple_instruction('OP_SUBTRACT', offset);
       case OpCode.MULTIPLY:
-        return simpleInstruction('OP_MULTIPLY', offset);
+        return simple_instruction('OP_MULTIPLY', offset);
       case OpCode.DIVIDE:
-        return simpleInstruction('OP_DIVIDE', offset);
+        return simple_instruction('OP_DIVIDE', offset);
       case OpCode.POW:
-        return simpleInstruction('OP_POW', offset);
+        return simple_instruction('OP_POW', offset);
       case OpCode.NOT:
-        return simpleInstruction('OP_NOT', offset);
+        return simple_instruction('OP_NOT', offset);
       case OpCode.NEGATE:
-        return simpleInstruction('OP_NEGATE', offset);
+        return simple_instruction('OP_NEGATE', offset);
       case OpCode.PRINT:
-        return simpleInstruction('OP_PRINT', offset);
+        return simple_instruction('OP_PRINT', offset);
       case OpCode.JUMP:
-        return jumpInstruction('OP_JUMP', 1, chunk, offset);
+        return jump_instruction('OP_JUMP', 1, chunk, offset);
       case OpCode.JUMP_IF_FALSE:
-        return jumpInstruction('OP_JUMP_IF_FALSE', 1, chunk, offset);
+        return jump_instruction('OP_JUMP_IF_FALSE', 1, chunk, offset);
       case OpCode.LOOP:
-        return jumpInstruction('OP_LOOP', -1, chunk, offset);
+        return jump_instruction('OP_LOOP', -1, chunk, offset);
       case OpCode.CALL:
-        return byteInstruction('OP_CALL', chunk, offset);
+        return byte_instruction('OP_CALL', chunk, offset);
       case OpCode.INVOKE:
-        return invokeInstruction('OP_INVOKE', chunk, offset);
+        return invoke_instruction('OP_INVOKE', chunk, offset);
       case OpCode.SUPER_INVOKE:
-        return invokeInstruction('OP_SUPER_INVOKE', chunk, offset);
+        return invoke_instruction('OP_SUPER_INVOKE', chunk, offset);
       case OpCode.CLOSURE:
-        {
+        // ignore: parameter_assignments
+        offset++;
+        // ignore: parameter_assignments
+        final constant = chunk.code[offset++];
+        stdwrite(sprintf('%-16s %4d ', ['OP_CLOSURE', constant]));
+        print_value(chunk.constants[constant]);
+        stdwrite('\n');
+        final function = (chunk.constants[constant] as ObjFunction?)!;
+        for (var j = 0; j < function.upvalueCount; j++) {
           // ignore: parameter_assignments
-          offset++;
+          final isLocal = chunk.code[offset++] == 1;
           // ignore: parameter_assignments
-          final constant = chunk.code[offset++];
-          stdwrite(sprintf('%-16s %4d ', ['OP_CLOSURE', constant]));
-          printValue(chunk.constants[constant]);
-          stdwrite('\n');
-          final function = (chunk.constants[constant] as ObjFunction?)!;
-          for (var j = 0; j < function.upvalueCount; j++) {
-            // ignore: parameter_assignments
-            final isLocal = chunk.code[offset++] == 1;
-            // ignore: parameter_assignments
-            final index = chunk.code[offset++];
-            stdwrite(sprintf('%04d      |                     %s %d\n',
-                [offset - 2, isLocal ? 'local' : 'upvalue', index]));
-          }
-          return offset;
+          final index = chunk.code[offset++];
+          stdwrite(sprintf(
+              '%04d      |                     %s %d\n', [offset - 2, isLocal ? 'local' : 'upvalue', index]));
         }
+        return offset;
       case OpCode.CLOSE_UPVALUE:
-        return simpleInstruction('OP_CLOSE_UPVALUE', offset);
+        return simple_instruction('OP_CLOSE_UPVALUE', offset);
       case OpCode.RETURN:
-        return simpleInstruction('OP_RETURN', offset);
+        return simple_instruction('OP_RETURN', offset);
       case OpCode.CLASS:
-        return constantInstruction('OP_CLASS', chunk, offset);
+        return constant_instruction('OP_CLASS', chunk, offset);
       case OpCode.INHERIT:
-        return simpleInstruction('OP_INHERIT', offset);
+        return simple_instruction('OP_INHERIT', offset);
       case OpCode.METHOD:
-        return constantInstruction('OP_METHOD', chunk, offset);
+        return constant_instruction('OP_METHOD', chunk, offset);
       case OpCode.LIST_INIT:
-        return initializerListInstruction('OP_LIST_INIT', chunk, offset);
+        return initializer_list_instruction('OP_LIST_INIT', chunk, offset);
       case OpCode.LIST_INIT_RANGE:
-        return simpleInstruction('LIST_INIT_RANGE', offset);
+        return simple_instruction('LIST_INIT_RANGE', offset);
       case OpCode.MAP_INIT:
-        return initializerListInstruction('OP_MAP_INIT', chunk, offset);
+        return initializer_list_instruction('OP_MAP_INIT', chunk, offset);
       case OpCode.CONTAINER_GET:
-        return simpleInstruction('OP_CONTAINER_GET', offset);
+        return simple_instruction('OP_CONTAINER_GET', offset);
       case OpCode.CONTAINER_SET:
-        return simpleInstruction('OP_CONTAINER_SET', offset);
+        return simple_instruction('OP_CONTAINER_SET', offset);
       case OpCode.CONTAINER_GET_RANGE:
-        return simpleInstruction('CONTAINER_GET_RANGE', offset);
+        return simple_instruction('CONTAINER_GET_RANGE', offset);
       case OpCode.CONTAINER_ITERATE:
-        return simpleInstruction('CONTAINER_ITERATE', offset);
-      // ignore: no_default_cases
-      default:
+        return simple_instruction('CONTAINER_ITERATE', offset);
+      case OpCode.MOD:
         throw Exception('Unknown opcode $instruction');
     }
   }
@@ -2382,7 +2312,7 @@ enum OpCode {
 class Chunk {
   final List<int> code = [];
   final List<Object?> constants = [];
-  final _constantMap = <Object?, int>{};
+  final _constant_map = <Object?, int>{};
 
   // Trace information
   final List<int> lines = [];
@@ -2391,18 +2321,26 @@ class Chunk {
 
   int get count => code.length;
 
-  void write(final int byte, final NaturalToken token) {
+  void write(
+    final int byte,
+    final NaturalToken token,
+  ) {
     code.add(byte);
     lines.add(token.loc.line);
   }
 
-  int addConstant(final Object? value) {
-    final idx = _constantMap[value];
-    if (idx != null) return idx;
-    // Add entry
-    constants.add(value);
-    _constantMap[value] = constants.length - 1;
-    return constants.length - 1;
+  int add_constant(
+    final Object? value,
+  ) {
+    final idx = _constant_map[value];
+    if (idx != null) {
+      return idx;
+    } else {
+      // Add entry
+      constants.add(value);
+      _constant_map[value] = constants.length - 1;
+      return constants.length - 1;
+    }
   }
 }
 // endregion
@@ -2410,22 +2348,27 @@ class Chunk {
 // region value
 class Nil {}
 
-Object valueCloneDeep(final Object value) {
+Object value_clone_deep(
+  final Object value,
+) {
   if (value is Map) {
-    return Map.fromEntries(value.entries.map((final e) => valueCloneDeep(e) as MapEntry<Object, Object>));
+    return Map.fromEntries(value.entries.map((final e) => value_clone_deep(e) as MapEntry<Object, Object>));
   } else if (value is List<Object>) {
-    return value.map((final e) => valueCloneDeep(e)).toList();
+    return value.map((final e) => value_clone_deep(e)).toList();
   } else {
     // TODO: clone object instances
     return value;
   }
 }
 
-String listToString(final List<dynamic> list, {final int maxChars = 100}) {
+String list_to_string(
+  final List<dynamic> list, {
+  final int maxChars = 100,
+}) {
   final buf = StringBuffer('[');
   for (var k = 0; k < list.length; k++) {
     if (k > 0) buf.write(',');
-    buf.write(valueToString(list[k], maxChars: maxChars - buf.length));
+    buf.write(value_to_string(list[k], maxChars: maxChars - buf.length));
     if (buf.length > maxChars) {
       buf.write('...');
       break;
@@ -2435,14 +2378,17 @@ String listToString(final List<dynamic> list, {final int maxChars = 100}) {
   return buf.toString();
 }
 
-String mapToString(final Map<dynamic, dynamic> map, {final int maxChars = 100}) {
+String map_to_string(
+  final Map<dynamic, dynamic> map, {
+  final int maxChars = 100,
+}) {
   final buf = StringBuffer('{');
   final entries = map.entries.toList();
   for (var k = 0; k < entries.length; k++) {
     if (k > 0) buf.write(',');
-    buf.write(valueToString(entries[k].key, maxChars: maxChars - buf.length));
+    buf.write(value_to_string(entries[k].key, maxChars: maxChars - buf.length));
     buf.write(':');
-    buf.write(valueToString(
+    buf.write(value_to_string(
       entries[k].value,
       maxChars: maxChars - buf.length,
     ));
@@ -2455,7 +2401,7 @@ String mapToString(final Map<dynamic, dynamic> map, {final int maxChars = 100}) 
   return buf.toString();
 }
 
-String? valueToString(
+String? value_to_string(
   final Object? value, {
   final int maxChars = 100,
   final bool quoteEmpty = true,
@@ -2474,16 +2420,19 @@ String? valueToString(
   } else if (value is String) {
     return value.trim().isEmpty && quoteEmpty ? '\'$value\'' : value;
   } else if (value is List) {
-    return listToString(value, maxChars: maxChars);
+    return list_to_string(value, maxChars: maxChars);
   } else if (value is Map) {
-    return mapToString(value, maxChars: maxChars);
+    return map_to_string(value, maxChars: maxChars);
   } else {
     return objectToString(value, maxChars: maxChars);
   }
 }
 
 // Copied from foundation.dart
-bool listEquals<T>(final List<T>? a, final List<T>? b) {
+bool list_equals<T>(
+  final List<T>? a,
+  final List<T>? b,
+) {
   if (a == null) return b == null;
   if (b == null || a.length != b.length) return false;
   if (identical(a, b)) return true;
@@ -2493,7 +2442,10 @@ bool listEquals<T>(final List<T>? a, final List<T>? b) {
   return true;
 }
 
-bool mapEquals<T, U>(final Map<T, U>? a, final Map<T, U>? b) {
+bool map_equals<T, U>(
+  final Map<T, U>? a,
+  final Map<T, U>? b,
+) {
   if (a == null) return b == null;
   if (b == null || a.length != b.length) return false;
   if (identical(a, b)) return true;
@@ -2503,14 +2455,17 @@ bool mapEquals<T, U>(final Map<T, U>? a, final Map<T, U>? b) {
   return true;
 }
 
-bool valuesEqual(final Object? a, final Object? b) {
+bool values_equal(
+  final Object? a,
+  final Object? b,
+) {
   // TODO: confirm behavior (especially for deep equality)
   // Equality relied on this function, but not hashmap indexing
   // It might trigger strange cases where two equal lists don't have the same hashcode
   if (a is List<dynamic> && b is List<dynamic>) {
-    return listEquals<dynamic>(a, b);
+    return list_equals<dynamic>(a, b);
   } else if (a is Map<dynamic, dynamic> && b is Map<dynamic, dynamic>) {
-    return mapEquals<dynamic, dynamic>(a, b);
+    return map_equals<dynamic, dynamic>(a, b);
   } else {
     return a == b;
   }
@@ -2518,43 +2473,6 @@ bool valuesEqual(final Object? a, final Object? b) {
 // endregion
 
 // region vm
-const int FRAMES_MAX = 64;
-const int STACK_MAX = FRAMES_MAX * UINT8_COUNT;
-const BATCH_COUNT = 1000000; // Must be fast enough
-
-class CallFrame {
-  late ObjClosure closure;
-  late int ip;
-  late Chunk chunk; // Additionnal reference
-  late int slotsIdx; // Index in stack of the frame slot
-}
-
-class InterpreterResult {
-  final List<LangError> errors;
-  final int lastLine;
-  final int stepCount;
-  final Object? returnValue;
-
-  bool get done {
-    return errors.isNotEmpty || returnValue != null;
-  }
-
-  InterpreterResult(
-    final List<LangError> errors,
-    this.lastLine,
-    this.stepCount,
-    this.returnValue,
-  ) : errors = List<LangError>.from(errors);
-}
-
-class FunctionParams {
-  final String? function;
-  final List<Object>? args;
-  final Map<String?, Object?>? globals;
-
-  FunctionParams({this.function, this.args, this.globals});
-}
-
 class VM {
   static const INIT_STRING = 'init';
   final List<CallFrame?> frames = List<CallFrame?>.filled(FRAMES_MAX, null);
@@ -2564,21 +2482,21 @@ class VM {
   final List<RuntimeError> errors = [];
   final Table globals = Table();
   final Table strings = Table();
-  CompilerResult? compilerResult;
-  int frameCount = 0;
-  int stackTop = 0;
-  ObjUpvalue? openUpvalues;
+  CompilerResult? compiler_result;
+  int frame_count = 0;
+  int stack_top = 0;
+  ObjUpvalue? open_upvalues;
 
   // Debug variables
-  int stepCount = 0;
+  int step_count = 0;
   int line = -1;
 
   // int skipLine = -1;
-  bool hasOp = false;
+  bool has_op = false;
 
   // Debug API
   bool traceExecution = false;
-  bool stepCode = false;
+  bool step_code = false;
   late Debug err_debug;
   late Debug trace_debug;
   late Debug stdout;
@@ -2586,9 +2504,15 @@ class VM {
   VM({
     required final bool silent,
   }) {
-    err_debug = Debug(silent);
-    trace_debug = Debug(silent);
-    stdout = Debug(silent);
+    err_debug = Debug(
+      silent: silent,
+    );
+    trace_debug = Debug(
+      silent: silent,
+    );
+    stdout = Debug(
+      silent: silent,
+    );
     _reset();
     for (var k = 0; k < frames.length; k++) {
       frames[k] = CallFrame();
@@ -2596,10 +2520,10 @@ class VM {
   }
 
   RuntimeError addError(
-    final String? msg, {
-    final RuntimeError? link,
-    final int? line,
-  }) {
+      final String? msg, {
+        final RuntimeError? link,
+        final int? line,
+      }) {
     // int line = -1;
     // if (frameCount > 0) {
     //   final frame = frames[frameCount - 1];
@@ -2613,13 +2537,13 @@ class VM {
   }
 
   InterpreterResult getResult(
-    final int line, {
-    final Object? returnValue,
-  }) {
+      final int line, {
+        final Object? returnValue,
+      }) {
     return InterpreterResult(
       errors,
       line,
-      stepCount,
+      step_count,
       returnValue,
     );
   }
@@ -2629,8 +2553,8 @@ class VM {
   }
 
   InterpreterResult withError(
-    final String msg,
-  ) {
+      final String msg,
+      ) {
     addError(msg);
     return result;
   }
@@ -2640,53 +2564,67 @@ class VM {
     errors.clear();
     globals.data.clear();
     strings.data.clear();
-    stackTop = 0;
-    frameCount = 0;
-    openUpvalues = null;
+    stack_top = 0;
+    frame_count = 0;
+    open_upvalues = null;
     // Reset debug values
-    stepCount = 0;
+    step_count = 0;
     line = -1;
-    hasOp = false;
+    has_op = false;
     stdout.clear();
     err_debug.clear();
     trace_debug.clear();
     // Reset flags
-    stepCode = false;
+    step_code = false;
     // Define natives
-    defineNatives();
+    define_natives();
   }
 
-  void setFunction(
-    final CompilerResult compilerResult,
-    final FunctionParams params,
-  ) {
+  void set_function(
+      final CompilerResult compiler_result,
+      final FunctionParams params,
+      ) {
     _reset();
     // Set compiler result
-    if (compilerResult.errors.isNotEmpty) {
+    if (compiler_result.errors.isNotEmpty) {
       throw Exception('Compiler result had errors');
+    } else {
+      this.compiler_result = compiler_result;
+      // Set function
+      ObjFunction? fun = compiler_result.function;
+      if (params.function != null) {
+        final found_fun = () {
+          for (final x in compiler_result.function.chunk.constants) {
+            if (x is ObjFunction && x.name == params.function) {
+              return x;
+            }
+          }
+          return null;
+        }();
+        if (found_fun == null) {
+          throw Exception('Function not found ${params.function}');
+        } else {
+          fun = found_fun;
+        }
+      }
+      // Set globals.
+      if (params.globals != null) {
+        globals.data.addAll(params.globals!);
+      }
+      // Init VM.
+      final closure = ObjClosure(fun);
+      push(closure);
+      if (params.args != null) {
+        params.args!.forEach(push);
+      }
+      callValue(closure, params.args?.length ?? 0);
     }
-    this.compilerResult = compilerResult;
-    // Set function
-    var fun = compilerResult.function;
-    if (params.function != null) {
-      fun = compilerResult.function!.chunk.constants.firstWhere((final obj) {
-        return obj is ObjFunction && obj.name == params.function;
-      }) as ObjFunction?;
-      if (fun == null) throw Exception('Function not found ${params.function}');
-    }
-    // Set globals
-    if (params.globals != null) globals.data.addAll(params.globals!);
-    // Init VM
-    final closure = ObjClosure(fun!);
-    push(closure);
-    if (params.args != null) params.args!.forEach((final arg) => push(arg));
-    callValue(closure, params.args?.length ?? 0);
   }
 
-  void defineNatives() {
-    NATIVE_FUNCTIONS.forEach((final function) {
+  void define_natives() {
+    for (final function in NATIVE_FUNCTIONS) {
       globals.setVal(function.name, function);
-    });
+    }
     NATIVE_VALUES.forEach((final key, final value) {
       globals.setVal(key, value);
     });
@@ -2695,467 +2633,453 @@ class VM {
     });
   }
 
-  void push(final Object? value) {
-    stack[stackTop++] = value;
+  void push(
+      final Object? value,
+      ) {
+    stack[stack_top++] = value;
   }
 
   Object? pop() {
-    return stack[--stackTop];
+    return stack[--stack_top];
   }
 
   Object? peek(
-    final int distance,
-  ) {
-    return stack[stackTop - distance - 1];
+      final int distance,
+      ) {
+    return stack[stack_top - distance - 1];
   }
 
   bool call(
-    final ObjClosure closure,
-    final int argCount,
-  ) {
+      final ObjClosure closure,
+      final int argCount,
+      ) {
     if (argCount != closure.function.arity) {
-      runtimeError('Expected %d arguments but got %d', [closure.function.arity, argCount]);
+      runtime_error('Expected %d arguments but got %d', [closure.function.arity, argCount]);
       return false;
+    } else {
+      if (frame_count == FRAMES_MAX) {
+        runtime_error('Stack overflow');
+        return false;
+      } else {
+        final frame = frames[frame_count++]!;
+        frame.closure = closure;
+        frame.chunk = closure.function.chunk;
+        frame.ip = 0;
+        frame.slots_idx = stack_top - argCount - 1;
+        return true;
+      }
     }
-
-    if (frameCount == FRAMES_MAX) {
-      runtimeError('Stack overflow');
-      return false;
-    }
-
-    final frame = frames[frameCount++]!;
-    frame.closure = closure;
-    frame.chunk = closure.function.chunk;
-    frame.ip = 0;
-
-    frame.slotsIdx = stackTop - argCount - 1;
-    return true;
   }
 
   bool callValue(
-    final Object? callee,
-    final int argCount,
-  ) {
+      final Object? callee,
+      final int argCount,
+      ) {
     if (callee is ObjBoundMethod) {
-      stack[stackTop - argCount - 1] = callee.receiver;
+      stack[stack_top - argCount - 1] = callee.receiver;
       return call(callee.method, argCount);
     } else if (callee is ObjClass) {
-      stack[stackTop - argCount - 1] = ObjInstance(klass: callee);
+      stack[stack_top - argCount - 1] = ObjInstance(klass: callee);
       final initializer = callee.methods.getVal(INIT_STRING);
       if (initializer != null) {
         return call(initializer as ObjClosure, argCount);
       } else if (argCount != 0) {
-        runtimeError('Expected 0 arguments but got %d', [argCount]);
+        runtime_error('Expected 0 arguments but got %d', [argCount]);
         return false;
       }
       return true;
     } else if (callee is ObjClosure) {
       return call(callee, argCount);
     } else if (callee is ObjNative) {
-      final res = callee.fn(stack, stackTop - argCount, argCount);
-      stackTop -= argCount + 1;
+      final res = callee.fn(stack, stack_top - argCount, argCount);
+      stack_top -= argCount + 1;
       push(res);
       return true;
     } else if (callee is NativeClassCreator) {
       try {
-        final res = callee(stack, stackTop - argCount, argCount);
-        stackTop -= argCount + 1;
+        final res = callee(stack, stack_top - argCount, argCount);
+        stack_top -= argCount + 1;
         push(res);
       } on NativeError catch (e) {
-        runtimeError(e.format, e.args);
+        runtime_error(e.format, e.args);
         return false;
       }
       return true;
     } else {
-      runtimeError('Can only call functions and classes');
+      runtime_error('Can only call functions and classes');
       return false;
     }
   }
 
-  bool invokeFromClass(
-    final ObjClass klass,
-    final String? name,
-    final int argCount,
-  ) {
+  bool invoke_from_class(
+      final ObjClass klass,
+      final String? name,
+      final int argCount,
+      ) {
     final method = klass.methods.getVal(name);
     if (method == null) {
-      runtimeError("Undefined property '%s'", [name]);
+      runtime_error("Undefined property '%s'", [name]);
       return false;
+    } else {
+      return call(method as ObjClosure, argCount);
     }
-    return call(method as ObjClosure, argCount);
   }
 
   bool invokeMap(
-    final Map<dynamic, dynamic> map,
-    final String? name,
-    final int argCount,
-  ) {
+      final Map<dynamic, dynamic> map,
+      final String? name,
+      final int argCount,
+      ) {
     if (!MAP_NATIVE_FUNCTIONS.containsKey(name)) {
-      runtimeError('Unknown method for map');
+      runtime_error('Unknown method for map');
       return false;
-    }
-    final function = MAP_NATIVE_FUNCTIONS[name!]!;
-    try {
-      final rtn = function(map, stack, stackTop - argCount, argCount);
-      stackTop -= argCount + 1;
-      push(rtn);
-      return true;
-    } on NativeError catch (e) {
-      runtimeError(e.format, e.args);
-      return false;
+    } else {
+      final function = MAP_NATIVE_FUNCTIONS[name!]!;
+      try {
+        final rtn = function(map, stack, stack_top - argCount, argCount);
+        stack_top -= argCount + 1;
+        push(rtn);
+        return true;
+      } on NativeError catch (e) {
+        runtime_error(e.format, e.args);
+        return false;
+      }
     }
   }
 
-  bool invokeList(
-    final List<dynamic> list,
-    final String? name,
-    final int argCount,
-  ) {
+  bool invoke_list(
+      final List<dynamic> list,
+      final String? name,
+      final int argCount,
+      ) {
     if (!LIST_NATIVE_FUNCTIONS.containsKey(name)) {
-      runtimeError('Unknown method for list');
+      runtime_error('Unknown method for list');
       return false;
-    }
-    final function = LIST_NATIVE_FUNCTIONS[name!]!;
-    try {
-      final rtn = function(list, stack, stackTop - argCount, argCount);
-      stackTop -= argCount + 1;
-      push(rtn);
-      return true;
-    } on NativeError catch (e) {
-      runtimeError(e.format, e.args);
-      return false;
+    } else {
+      final function = LIST_NATIVE_FUNCTIONS[name!]!;
+      try {
+        final rtn = function(list, stack, stack_top - argCount, argCount);
+        stack_top -= argCount + 1;
+        push(rtn);
+        return true;
+      } on NativeError catch (e) {
+        runtime_error(e.format, e.args);
+        return false;
+      }
     }
   }
 
-  bool invokeString(
-    final String str,
-    final String? name,
-    final int argCount,
-  ) {
+  bool invoke_string(
+      final String str,
+      final String? name,
+      final int argCount,
+      ) {
     if (!STRING_NATIVE_FUNCTIONS.containsKey(name)) {
-      runtimeError('Unknown method for string');
+      runtime_error('Unknown method for string');
       return false;
-    }
-    final function = STRING_NATIVE_FUNCTIONS[name!]!;
-    try {
-      final rtn = function(str, stack, stackTop - argCount, argCount);
-      stackTop -= argCount + 1;
-      push(rtn);
-      return true;
-    } on NativeError catch (e) {
-      runtimeError(e.format, e.args);
-      return false;
+    } else {
+      final function = STRING_NATIVE_FUNCTIONS[name!]!;
+      try {
+        final rtn = function(str, stack, stack_top - argCount, argCount);
+        stack_top -= argCount + 1;
+        push(rtn);
+        return true;
+      } on NativeError catch (e) {
+        runtime_error(e.format, e.args);
+        return false;
+      }
     }
   }
 
-  bool invokeNativeClass(
-    final ObjNativeClass klass,
-    final String? name,
-    final int argCount,
-  ) {
+  bool invoke_native_class(
+      final ObjNativeClass klass,
+      final String? name,
+      final int arg_count,
+      ) {
     try {
-      final rtn = klass.call(name, stack, stackTop - argCount, argCount);
-      stackTop -= argCount + 1;
+      final rtn = klass.call(name, stack, stack_top - arg_count, arg_count);
+      stack_top -= arg_count + 1;
       push(rtn);
       return true;
     } on NativeError catch (e) {
-      runtimeError(e.format, e.args);
+      runtime_error(e.format, e.args);
       return false;
     }
   }
 
   bool invoke(
-    final String? name,
-    final int argCount,
-  ) {
-    final receiver = peek(argCount);
-    if (receiver is List) return invokeList(receiver, name, argCount);
-    if (receiver is Map) return invokeMap(receiver, name, argCount);
-    if (receiver is String) return invokeString(receiver, name, argCount);
-    if (receiver is ObjNativeClass) {
-      return invokeNativeClass(receiver, name, argCount);
-    }
-    if (!(receiver is ObjInstance)) {
-      runtimeError('Only instances have methods');
+      final String? name,
+      final int arg_count,
+      ) {
+    final receiver = peek(arg_count);
+    if (receiver is List) {
+      return invoke_list(receiver, name, arg_count);
+    } else if (receiver is Map) {
+      return invokeMap(receiver, name, arg_count);
+    } else if (receiver is String) {
+      return invoke_string(receiver, name, arg_count);
+    } else if (receiver is ObjNativeClass) {
+      return invoke_native_class(receiver, name, arg_count);
+    } else if (!(receiver is ObjInstance)) {
+      runtime_error('Only instances have methods');
       return false;
-    }
-    final instance = receiver;
-    final value = instance.fields.getVal(name);
-    if (value != null) {
-      stack[stackTop - argCount - 1] = value;
-      return callValue(value, argCount);
-    }
-    if (instance.klass == null) {
-      final klass = globals.getVal(instance.klassName);
-      if (!(klass is ObjClass)) {
-        runtimeError('Class ${instance.klassName} not found');
-        return false;
+    } else {
+      final instance = receiver;
+      final value = instance.fields.getVal(name);
+      if (value != null) {
+        stack[stack_top - arg_count - 1] = value;
+        return callValue(value, arg_count);
+      } else {
+        if (instance.klass == null) {
+          final klass = globals.getVal(instance.klassName);
+          if (klass is! ObjClass) {
+            runtime_error('Class ${instance.klassName} not found');
+            return false;
+          }
+          instance.klass = klass;
+        }
+        return invoke_from_class(instance.klass!, name, arg_count);
       }
-      instance.klass = klass;
     }
-    return invokeFromClass(instance.klass!, name, argCount);
   }
 
-  bool bindMethod(
-    final ObjClass klass,
-    final String? name,
-  ) {
+  bool bind_method(
+      final ObjClass klass,
+      final String? name,
+      ) {
     final method = klass.methods.getVal(name);
     if (method == null) {
-      runtimeError("Undefined property '%s'", [name]);
+      runtime_error("Undefined property '%s'", [name]);
       return false;
+    } else {
+      final bound = ObjBoundMethod(
+        peek(0),
+        method as ObjClosure,
+      );
+      pop();
+      push(bound);
+      return true;
     }
-    final bound = ObjBoundMethod(peek(0), method as ObjClosure);
-    pop();
-    push(bound);
-    return true;
   }
 
-  ObjUpvalue captureUpvalue(
-    final int localIdx,
-  ) {
-    ObjUpvalue? prevUpvalue;
-    var upvalue = openUpvalues;
-
+  ObjUpvalue capture_upvalue(
+      final int localIdx,
+      ) {
+    ObjUpvalue? prev_upvalue;
+    ObjUpvalue? upvalue = open_upvalues;
     while (upvalue != null && upvalue.location! > localIdx) {
-      prevUpvalue = upvalue;
+      prev_upvalue = upvalue;
       upvalue = upvalue.next;
     }
-
     if (upvalue != null && upvalue.location == localIdx) {
       return upvalue;
-    }
-
-    final createdUpvalue = ObjUpvalue(localIdx);
-    createdUpvalue.next = upvalue;
-
-    if (prevUpvalue == null) {
-      openUpvalues = createdUpvalue;
     } else {
-      prevUpvalue.next = createdUpvalue;
+      final created_upvalue = ObjUpvalue(localIdx);
+      created_upvalue.next = upvalue;
+      if (prev_upvalue == null) {
+        open_upvalues = created_upvalue;
+      } else {
+        prev_upvalue.next = created_upvalue;
+      }
+      return created_upvalue;
     }
-
-    return createdUpvalue;
   }
 
-  void closeUpvalues(
-    final int? lastIdx,
-  ) {
-    while (openUpvalues != null && openUpvalues!.location! >= lastIdx!) {
-      final upvalue = openUpvalues!;
+  void close_upvalues(
+      final int? lastIdx,
+      ) {
+    while (open_upvalues != null && open_upvalues!.location! >= lastIdx!) {
+      final upvalue = open_upvalues!;
       upvalue.closed = stack[upvalue.location!];
       upvalue.location = null;
-      openUpvalues = upvalue.next;
+      open_upvalues = upvalue.next;
     }
   }
 
-  void defineMethod(
-    final String? name,
-  ) {
+  void define_method(
+      final String? name,
+      ) {
     final method = peek(0);
-    final ObjClass klass = (peek(1) as ObjClass?)!;
+    final klass = (peek(1) as ObjClass?)!;
     klass.methods.setVal(name, method);
     pop();
   }
 
-  bool isFalsey(
-    final Object? value,
-  ) {
+  bool is_falsey(
+      final Object? value,
+      ) {
     return value == Nil || (value is bool && !value);
   }
 
   // Repace macros (slower -> try inlining)
-  int readByte(
-    final CallFrame frame,
-  ) {
+  int read_byte(
+      final CallFrame frame,
+      ) {
     return frame.chunk.code[frame.ip++];
   }
 
-  int readShort(
-    final CallFrame frame,
-  ) {
+  int read_short(
+      final CallFrame frame,
+      ) {
     // TODO: Optimisation - remove
     frame.ip += 2;
     return frame.chunk.code[frame.ip - 2] << 8 | frame.chunk.code[frame.ip - 1];
   }
 
-  Object? readConstant(
-    final CallFrame frame,
-  ) {
-    return frame.closure.function.chunk.constants[readByte(frame)];
+  Object? read_constant(
+      final CallFrame frame,
+      ) {
+    return frame.closure.function.chunk.constants[read_byte(frame)];
   }
 
-  String? readString(
-    final CallFrame frame,
-  ) {
-    return readConstant(frame) as String?;
+  String? read_string(
+      final CallFrame frame,
+      ) {
+    return read_constant(frame) as String?;
   }
 
-  bool assertNumber(
-    final dynamic a,
-    final dynamic b,
-  ) {
+  bool assert_number(
+      final dynamic a,
+      final dynamic b,
+      ) {
     if (!(a is double) || !(b is double)) {
-      runtimeError('Operands must be numbers');
+      runtime_error('Operands must be numbers');
       return false;
+    } else {
+      return true;
     }
-    return true;
   }
 
-  int? checkIndex(
-    final int length,
-    Object? idxObj, {
-    final bool fromStart = true,
-  }) {
+  int? check_index(
+      final int length,
+      Object? idxObj, {
+        final bool fromStart = true,
+      }) {
     // ignore: parameter_assignments
     if (idxObj == Nil) idxObj = fromStart ? 0.0 : length.toDouble();
     if (!(idxObj is double)) {
-      runtimeError('Index must be a number');
+      runtime_error('Index must be a number');
       return null;
+    } else {
+      var idx = idxObj.toInt();
+      if (idx < 0) idx = length + idx;
+      final max = fromStart ? length - 1 : length;
+      if (idx < 0 || idx > max) {
+        runtime_error('Index $idx out of bounds [0, $max]');
+        return null;
+      } else {
+        return idx;
+      }
     }
-    var idx = idxObj.toInt();
-    if (idx < 0) idx = length + idx;
-    final max = fromStart ? length - 1 : length;
-    if (idx < 0 || idx > max) {
-      runtimeError('Index $idx out of bounds [0, $max]');
-      return null;
-    }
-    return idx;
   }
 
   bool get done {
-    return frameCount == 0;
+    return frame_count == 0;
   }
 
   InterpreterResult run() {
     InterpreterResult? res;
     do {
-      res = stepBatch();
+      res = step_batch();
     } while (res == null);
     return res;
   }
 
-  InterpreterResult? stepBatch({
-    final int batchCount = BATCH_COUNT,
+  InterpreterResult? step_batch({
+    final int batch_count = BATCH_COUNT,
   }) {
     // Setup
-    if (frameCount == 0) return withError('No call frame');
-    var frame = frames[frameCount - 1];
-    final stepCountLimit = stepCount + batchCount;
-    // Main loop
-    while (stepCount++ < stepCountLimit) {
-      // Setup current line
-      final frameLine = frame!.chunk.lines[frame.ip];
-      // Step code helper
-      if (stepCode) {
-        final instruction = frame.chunk.code[frame.ip];
-        final op = OpCode.values[instruction];
-        // Pause execution on demand
-        if (frameLine != line && hasOp) {
-          // Newline detected, return
-          // No need to set line to frameLine thanks to hasOp
-          hasOp = false;
-          return getResult(line);
+    if (frame_count == 0) {
+      return withError('No call frame');
+    } else {
+      CallFrame? frame = frames[frame_count - 1];
+      final stepCountLimit = step_count + batch_count;
+      // Main loop
+      while (step_count++ < stepCountLimit) {
+        // Setup current line
+        final frameLine = frame!.chunk.lines[frame.ip];
+        // Step code helper
+        if (step_code) {
+          final instruction = frame.chunk.code[frame.ip];
+          final op = OpCode.values[instruction];
+          // Pause execution on demand
+          if (frameLine != line && has_op) {
+            // Newline detected, return
+            // No need to set line to frameLine thanks to hasOp
+            has_op = false;
+            return getResult(line);
+          }
+          // A line is worth stopping on if it has one of those opts
+          has_op |= op != OpCode.POP && op != OpCode.LOOP && op != OpCode.JUMP;
         }
-        // A line is worth stopping on if it has one of those opts
-        hasOp |= op != OpCode.POP && op != OpCode.LOOP && op != OpCode.JUMP;
-      }
-
-      // Update line
-      final prevLine = line;
-      line = frameLine;
-
-      // Trace execution if needed
-      if (traceExecution) {
-        trace_debug.stdwrite('          ');
-        for (var k = 0; k < stackTop; k++) {
-          trace_debug.stdwrite('[ ');
-          trace_debug.printValue(stack[k]);
-          trace_debug.stdwrite(' ]');
+        // Update line
+        final prevLine = line;
+        line = frameLine;
+        // Trace execution if needed
+        if (traceExecution) {
+          trace_debug.stdwrite('          ');
+          for (var k = 0; k < stack_top; k++) {
+            trace_debug.stdwrite('[ ');
+            trace_debug.print_value(stack[k]);
+            trace_debug.stdwrite(' ]');
+          }
+          trace_debug.stdwrite('\n');
+          trace_debug.disassemble_instruction(prevLine, frame.closure.function.chunk, frame.ip);
         }
-        trace_debug.stdwrite('\n');
-        trace_debug.disassembleInstruction(prevLine, frame.closure.function.chunk, frame.ip);
-      }
-
-      final instruction = readByte(frame);
-      switch (OpCode.values[instruction]) {
-        case OpCode.CONSTANT:
-          {
-            final constant = readConstant(frame);
+        final instruction = read_byte(frame);
+        switch (OpCode.values[instruction]) {
+          case OpCode.CONSTANT:
+            final constant = read_constant(frame);
             push(constant);
             break;
-          }
-
-        case OpCode.NIL:
-          push(Nil);
-          break;
-
-        case OpCode.TRUE:
-          push(true);
-          break;
-
-        case OpCode.FALSE:
-          push(false);
-          break;
-
-        case OpCode.POP:
-          pop();
-          break;
-
-        case OpCode.GET_LOCAL:
-          {
-            final slot = readByte(frame);
-            push(stack[frame.slotsIdx + slot]);
+          case OpCode.NIL:
+            push(Nil);
             break;
-          }
-
-        case OpCode.SET_LOCAL:
-          {
-            final slot = readByte(frame);
-            stack[frame.slotsIdx + slot] = peek(0);
+          case OpCode.TRUE:
+            push(true);
             break;
-          }
-
-        case OpCode.GET_GLOBAL:
-          {
-            final name = readString(frame);
+          case OpCode.FALSE:
+            push(false);
+            break;
+          case OpCode.POP:
+            pop();
+            break;
+          case OpCode.GET_LOCAL:
+            final slot = read_byte(frame);
+            push(stack[frame.slots_idx + slot]);
+            break;
+          case OpCode.SET_LOCAL:
+            final slot = read_byte(frame);
+            stack[frame.slots_idx + slot] = peek(0);
+            break;
+          case OpCode.GET_GLOBAL:
+            final name = read_string(frame);
             final value = globals.getVal(name);
             if (value == null) {
-              return runtimeError("Undefined variable '%s'", [name]);
+              return runtime_error("Undefined variable '%s'", [name]);
             }
             push(value);
             break;
-          }
-
-        case OpCode.DEFINE_GLOBAL:
-          {
-            final name = readString(frame);
+          case OpCode.DEFINE_GLOBAL:
+            final name = read_string(frame);
             globals.setVal(name, peek(0));
             pop();
             break;
-          }
-
-        case OpCode.SET_GLOBAL:
-          {
-            final name = readString(frame);
+          case OpCode.SET_GLOBAL:
+            final name = read_string(frame);
             if (globals.setVal(name, peek(0))) {
               globals.delete(name); // [delete]
-              return runtimeError("Undefined variable '%s'", [name]);
+              return runtime_error("Undefined variable '%s'", [name]);
+            } else {
+              break;
             }
-            break;
-          }
-
-        case OpCode.GET_UPVALUE:
-          {
-            final slot = readByte(frame);
+          case OpCode.GET_UPVALUE:
+            final slot = read_byte(frame);
             final upvalue = frame.closure.upvalues[slot]!;
             push(upvalue.location != null ? stack[upvalue.location!] : upvalue.closed);
             break;
-          }
-
-        case OpCode.SET_UPVALUE:
-          {
-            final slot = readByte(frame);
+          case OpCode.SET_UPVALUE:
+            final slot = read_byte(frame);
             final upvalue = frame.closure.upvalues[slot]!;
             if (upvalue.location != null) {
               stack[upvalue.location!] = peek(0);
@@ -3163,74 +3087,59 @@ class VM {
               upvalue.closed = peek(0);
             }
             break;
-          }
-
-        case OpCode.GET_PROPERTY:
-          {
+          case OpCode.GET_PROPERTY:
             Object? value;
             if (peek(0) is ObjInstance) {
               final ObjInstance instance = (peek(0) as ObjInstance?)!;
-              final name = readString(frame);
+              final name = read_string(frame);
               value = instance.fields.getVal(name);
-              if (value == null && !bindMethod(instance.klass!, name)) {
+              if (value == null && !bind_method(instance.klass!, name)) {
                 return result;
               }
             } else if (peek(0) is ObjNativeClass) {
               final ObjNativeClass instance = (peek(0) as ObjNativeClass?)!;
-              final name = readString(frame);
+              final name = read_string(frame);
               try {
                 value = instance.getVal(name);
               } on NativeError catch (e) {
-                return runtimeError(e.format, e.args);
+                return runtime_error(e.format, e.args);
               }
             } else {
-              return runtimeError('Only instances have properties');
+              return runtime_error('Only instances have properties');
             }
             if (value != null) {
               pop(); // Instance.
               push(value);
             }
             break;
-          }
-
-        case OpCode.SET_PROPERTY:
-          {
+          case OpCode.SET_PROPERTY:
             if (peek(1) is ObjInstance) {
               final ObjInstance instance = (peek(1) as ObjInstance?)!;
-              instance.fields.setVal(readString(frame), peek(0));
+              instance.fields.setVal(read_string(frame), peek(0));
             } else if (peek(1) is ObjNativeClass) {
               final ObjNativeClass instance = (peek(1) as ObjNativeClass?)!;
-              instance.setVal(readString(frame), peek(0));
+              instance.setVal(read_string(frame), peek(0));
             } else {
-              return runtimeError('Only instances have fields');
+              return runtime_error('Only instances have fields');
             }
             final value = pop();
             pop();
             push(value);
             break;
-          }
-
-        case OpCode.GET_SUPER:
-          {
-            final name = readString(frame);
+          case OpCode.GET_SUPER:
+            final name = read_string(frame);
             final ObjClass superclass = (pop() as ObjClass?)!;
-            if (!bindMethod(superclass, name)) {
+            if (!bind_method(superclass, name)) {
               return result;
             }
             break;
-          }
-
-        case OpCode.EQUAL:
-          {
+          case OpCode.EQUAL:
             final b = pop();
             final a = pop();
-            push(valuesEqual(a, b));
+            push(values_equal(a, b));
             break;
-          }
-
         // Optimisation create greater_or_equal
-        case OpCode.GREATER:
-          {
+          case OpCode.GREATER:
             final b = pop();
             final a = pop();
             if (a is String && b is String) {
@@ -3238,14 +3147,11 @@ class VM {
             } else if (a is double && b is double) {
               push(a > b);
             } else {
-              return runtimeError('Operands must be numbers or strings');
+              return runtime_error('Operands must be numbers or strings');
             }
             break;
-          }
-
         // Optimisation create less_or_equal
-        case OpCode.LESS:
-          {
+          case OpCode.LESS:
             final b = pop();
             final a = pop();
             if (a is String && b is String) {
@@ -3253,13 +3159,10 @@ class VM {
             } else if (a is double && b is double) {
               push(a < b);
             } else {
-              return runtimeError('Operands must be numbers or strings');
+              return runtime_error('Operands must be numbers or strings');
             }
             break;
-          }
-
-        case OpCode.ADD:
-          {
+          case OpCode.ADD:
             final b = pop();
             final a = pop();
             if ((a is double) && (b is double)) {
@@ -3274,268 +3177,214 @@ class VM {
               res.addAll(b);
               push(res);
             } else if ((a is String) || (b is String)) {
-              push(valueToString(a, quoteEmpty: false)! + valueToString(b, quoteEmpty: false)!);
+              push(value_to_string(a, quoteEmpty: false)! + value_to_string(b, quoteEmpty: false)!);
             } else {
-              return runtimeError('Operands must numbers, strings, lists or maps');
+              return runtime_error('Operands must numbers, strings, lists or maps');
             }
             break;
-          }
-
-        case OpCode.SUBTRACT:
-          {
+          case OpCode.SUBTRACT:
             final b = pop();
             final a = pop();
-            if (!assertNumber(a, b)) return result;
+            if (!assert_number(a, b)) return result;
             push((a as double?)! - (b as double?)!);
             break;
-          }
-
-        case OpCode.MULTIPLY:
-          {
+          case OpCode.MULTIPLY:
             final b = pop();
             final a = pop();
-            if (!assertNumber(a, b)) return result;
+            if (!assert_number(a, b)) return result;
             push((a as double?)! * (b as double?)!);
             break;
-          }
-
-        case OpCode.DIVIDE:
-          {
+          case OpCode.DIVIDE:
             final b = pop();
             final a = pop();
-            if (!assertNumber(a, b)) return result;
+            if (!assert_number(a, b)) return result;
             push((a as double?)! / (b as double?)!);
             break;
-          }
-
-        case OpCode.POW:
-          {
+          case OpCode.POW:
             final b = pop();
             final a = pop();
-            if (!assertNumber(a, b)) return result;
+            if (!assert_number(a, b)) return result;
             push(pow((a as double?)!, (b as double?)!));
             break;
-          }
-
-        case OpCode.MOD:
-          {
+          case OpCode.MOD:
             final b = pop();
             final a = pop();
-            if (!assertNumber(a, b)) return result;
+            if (!assert_number(a, b)) return result;
             push((a as double?)! % (b as double?)!);
             break;
-          }
-
-        case OpCode.NOT:
-          push(isFalsey(pop()));
-          break;
-
-        case OpCode.NEGATE:
-          if (!(peek(0) is double)) {
-            return runtimeError('Operand must be a number');
-          }
-          push(-(pop() as double?)!);
-          break;
-
-        case OpCode.PRINT:
-          {
-            final val = valueToString(pop());
+          case OpCode.NOT:
+            push(is_falsey(pop()));
+            break;
+          case OpCode.NEGATE:
+            if (!(peek(0) is double)) {
+              return runtime_error('Operand must be a number');
+            } else {
+              push(-(pop() as double?)!);
+              break;
+            }
+          case OpCode.PRINT:
+            final val = value_to_string(pop());
             stdout.stdwriteln(val);
             break;
-          }
-
-        case OpCode.JUMP:
-          {
-            final offset = readShort(frame);
+          case OpCode.JUMP:
+            final offset = read_short(frame);
             frame.ip += offset;
             break;
-          }
-
-        case OpCode.JUMP_IF_FALSE:
-          {
-            final offset = readShort(frame);
-            if (isFalsey(peek(0))) frame.ip += offset;
+          case OpCode.JUMP_IF_FALSE:
+            final offset = read_short(frame);
+            if (is_falsey(peek(0))) frame.ip += offset;
             break;
-          }
-
-        case OpCode.LOOP:
-          {
-            final offset = readShort(frame);
+          case OpCode.LOOP:
+            final offset = read_short(frame);
             frame.ip -= offset;
             break;
-          }
-
-        case OpCode.CALL:
-          {
-            final argCount = readByte(frame);
+          case OpCode.CALL:
+            final argCount = read_byte(frame);
             if (!callValue(peek(argCount), argCount)) {
               return result;
+            } else {
+              frame = frames[frame_count - 1];
+              break;
             }
-            frame = frames[frameCount - 1];
-            break;
-          }
-
-        case OpCode.INVOKE:
-          {
-            final method = readString(frame);
-            final argCount = readByte(frame);
-            if (!invoke(method, argCount)) {
+          case OpCode.INVOKE:
+            final method = read_string(frame);
+            final arg_count = read_byte(frame);
+            if (!invoke(method, arg_count)) {
               return result;
+            } else {
+              frame = frames[frame_count - 1];
+              break;
             }
-            frame = frames[frameCount - 1];
-            break;
-          }
-
-        case OpCode.SUPER_INVOKE:
-          {
-            final method = readString(frame);
-            final argCount = readByte(frame);
-            final ObjClass superclass = (pop() as ObjClass?)!;
-            if (!invokeFromClass(superclass, method, argCount)) {
+          case OpCode.SUPER_INVOKE:
+            final method = read_string(frame);
+            final arg_count = read_byte(frame);
+            final superclass = (pop() as ObjClass?)!;
+            if (!invoke_from_class(superclass, method, arg_count)) {
               return result;
+            } else {
+              frame = frames[frame_count - 1];
+              break;
             }
-            frame = frames[frameCount - 1];
-            break;
-          }
-
-        case OpCode.CLOSURE:
-          {
-            final ObjFunction function = (readConstant(frame) as ObjFunction?)!;
+          case OpCode.CLOSURE:
+            final function = (read_constant(frame) as ObjFunction?)!;
             final closure = ObjClosure(function);
             push(closure);
-            for (var i = 0; i < closure.upvalueCount; i++) {
-              final isLocal = readByte(frame);
-              final index = readByte(frame);
+            for (int i = 0; i < closure.upvalueCount; i++) {
+              final isLocal = read_byte(frame);
+              final index = read_byte(frame);
               if (isLocal == 1) {
-                closure.upvalues[i] = captureUpvalue(frame.slotsIdx + index);
+                closure.upvalues[i] = capture_upvalue(frame.slots_idx + index);
               } else {
                 closure.upvalues[i] = frame.closure.upvalues[index];
               }
             }
             break;
-          }
-
-        case OpCode.CLOSE_UPVALUE:
-          closeUpvalues(stackTop - 1);
-          pop();
-          break;
-
-        case OpCode.RETURN:
-          {
+          case OpCode.CLOSE_UPVALUE:
+            close_upvalues(stack_top - 1);
+            pop();
+            break;
+          case OpCode.RETURN:
             final res = pop();
-            closeUpvalues(frame.slotsIdx);
-            frameCount--;
+            close_upvalues(frame.slots_idx);
+            frame_count--;
             // ignore: invariant_booleans
-            if (frameCount == 0) {
+            if (frame_count == 0) {
               pop();
               return getResult(line, returnValue: res);
+            } else {
+              stack_top = frame.slots_idx;
+              push(res);
+              frame = frames[frame_count - 1];
+              break;
             }
-            stackTop = frame.slotsIdx;
-            push(res);
-            frame = frames[frameCount - 1];
+          case OpCode.CLASS:
+            push(ObjClass(read_string(frame)));
             break;
-          }
-
-        case OpCode.CLASS:
-          push(ObjClass(readString(frame)));
-          break;
-
-        case OpCode.INHERIT:
-          {
+          case OpCode.INHERIT:
             final sup = peek(1);
             if (!(sup is ObjClass)) {
-              return runtimeError('Superclass must be a class');
+              return runtime_error('Superclass must be a class');
+            } else {
+              final ObjClass superclass = sup;
+              final ObjClass subclass = (peek(0) as ObjClass?)!;
+              subclass.methods.addAll(superclass.methods);
+              pop(); // Subclass.
+              break;
             }
-            final ObjClass superclass = sup;
-            final ObjClass subclass = (peek(0) as ObjClass?)!;
-            subclass.methods.addAll(superclass.methods);
-            pop(); // Subclass.
+          case OpCode.METHOD:
+            define_method(read_string(frame));
             break;
-          }
-
-        case OpCode.METHOD:
-          defineMethod(readString(frame));
-          break;
-
-        case OpCode.LIST_INIT:
-          final valCount = readByte(frame);
-          final arr = <dynamic>[];
-          for (var k = 0; k < valCount; k++) {
-            arr.add(peek(valCount - k - 1));
-          }
-          stackTop -= valCount;
-          push(arr);
-          break;
-
-        case OpCode.LIST_INIT_RANGE:
-          if (!(peek(0) is double) || !(peek(1) is double)) {
-            return runtimeError('List initializer bounds must be number');
-          }
-          final start = (peek(1) as double?)!;
-          final end = (peek(0) as double?)!;
-          if (end - start == double.infinity) {
-            return runtimeError('Invalid list initializer');
-          }
-          final arr = <dynamic>[];
-          for (var k = start; k < end; k++) {
-            arr.add(k);
-          }
-          stackTop -= 2;
-          push(arr);
-          break;
-
-        case OpCode.MAP_INIT:
-          final valCount = readByte(frame);
-          final map = <dynamic, dynamic>{};
-          for (var k = 0; k < valCount; k++) {
-            map[peek((valCount - k - 1) * 2 + 1)] = peek((valCount - k - 1) * 2);
-          }
-          stackTop -= 2 * valCount;
-          push(map);
-          break;
-
-        case OpCode.CONTAINER_GET:
-          {
+          case OpCode.LIST_INIT:
+            final valCount = read_byte(frame);
+            final arr = <dynamic>[];
+            for (var k = 0; k < valCount; k++) {
+              arr.add(peek(valCount - k - 1));
+            }
+            stack_top -= valCount;
+            push(arr);
+            break;
+          case OpCode.LIST_INIT_RANGE:
+            if (!(peek(0) is double) || !(peek(1) is double)) {
+              return runtime_error('List initializer bounds must be number');
+            } else {
+              final start = (peek(1) as double?)!;
+              final end = (peek(0) as double?)!;
+              if (end - start == double.infinity) {
+                return runtime_error('Invalid list initializer');
+              } else {
+                final arr = <dynamic>[];
+                for (var k = start; k < end; k++) {
+                  arr.add(k);
+                }
+                stack_top -= 2;
+                push(arr);
+                break;
+              }
+            }
+          case OpCode.MAP_INIT:
+            final valCount = read_byte(frame);
+            final map = <dynamic, dynamic>{};
+            for (var k = 0; k < valCount; k++) {
+              map[peek((valCount - k - 1) * 2 + 1)] = peek((valCount - k - 1) * 2);
+            }
+            stack_top -= 2 * valCount;
+            push(map);
+            break;
+          case OpCode.CONTAINER_GET:
             final idxObj = pop();
             final container = pop();
             if (container is List) {
-              final idx = checkIndex(container.length, idxObj);
+              final idx = check_index(container.length, idxObj);
               if (idx == null) return result;
               push(container[idx]);
             } else if (container is Map) {
               push(container[idxObj]);
             } else if (container is String) {
-              final idx = checkIndex(container.length, idxObj);
+              final idx = check_index(container.length, idxObj);
               if (idx == null) return result;
               push(container[idx]);
             } else {
-              return runtimeError(
+              return runtime_error(
                 'Indexing targets must be Strings, Lists or Maps',
               );
             }
             break;
-          }
-
-        case OpCode.CONTAINER_SET:
-          {
+          case OpCode.CONTAINER_SET:
             final val = pop();
-            final idxObj = pop();
+            final idx_obj = pop();
             final container = pop();
             if (container is List) {
-              final idx = checkIndex(container.length, idxObj);
+              final idx = check_index(container.length, idx_obj);
               if (idx == null) return result;
               container[idx] = val;
             } else if (container is Map) {
-              container[idxObj] = val;
+              container[idx_obj] = val;
             } else {
-              return runtimeError('Indexing targets must be Lists or Maps');
+              return runtime_error('Indexing targets must be Lists or Maps');
             }
             push(val);
             break;
-          }
-
-        case OpCode.CONTAINER_GET_RANGE:
-          {
+          case OpCode.CONTAINER_GET_RANGE:
             var bIdx = pop();
             var aIdx = pop();
             final container = pop();
@@ -3545,10 +3394,10 @@ class VM {
             } else if (container is String) {
               length = container.length;
             } else {
-              return runtimeError('Range indexing targets must be Lists or Strings');
+              return runtime_error('Range indexing targets must be Lists or Strings');
             }
-            aIdx = checkIndex(length, aIdx);
-            bIdx = checkIndex(length, bIdx, fromStart: false);
+            aIdx = check_index(length, aIdx);
+            bIdx = check_index(length, bIdx, fromStart: false);
             if (aIdx == null || bIdx == null) return result;
             if (container is List) {
               push(container.sublist(aIdx as int, bIdx as int?));
@@ -3556,67 +3405,65 @@ class VM {
               push(container.substring(aIdx as int, bIdx as int?));
             }
             break;
-          }
-
-        case OpCode.CONTAINER_ITERATE:
-          {
-            // Init stack indexes
-            final valIdx = readByte(frame);
+          case OpCode.CONTAINER_ITERATE:
+          // Init stack indexes
+            final valIdx = read_byte(frame);
             final keyIdx = valIdx + 1;
             final idxIdx = valIdx + 2;
             final iterableIdx = valIdx + 3;
             final containerIdx = valIdx + 4;
             // Retreive data
-            var idxObj = stack[frame.slotsIdx + idxIdx];
+            var idxObj = stack[frame.slots_idx + idxIdx];
             // Initialize
             if (idxObj == Nil) {
-              final container = stack[frame.slotsIdx + containerIdx];
+              final container = stack[frame.slots_idx + containerIdx];
               idxObj = 0.0;
               if (container is String) {
-                stack[frame.slotsIdx + iterableIdx] = container.split('');
+                stack[frame.slots_idx + iterableIdx] = container.split('');
               } else if (container is List) {
-                stack[frame.slotsIdx + iterableIdx] = container;
+                stack[frame.slots_idx + iterableIdx] = container;
               } else if (container is Map) {
-                stack[frame.slotsIdx + iterableIdx] = container.entries.toList();
+                stack[frame.slots_idx + iterableIdx] = container.entries.toList();
               } else {
-                return runtimeError('Iterable must be Strings, Lists or Maps');
+                return runtime_error('Iterable must be Strings, Lists or Maps');
               }
               // Pop container from stack
               pop();
             }
             // Iterate
-            final double idx = (idxObj as double?)!;
-            final iterable = (stack[frame.slotsIdx + iterableIdx] as List?)!;
+            final idx = (idxObj as double?)!;
+            final iterable = (stack[frame.slots_idx + iterableIdx] as List?)!;
             if (idx >= iterable.length) {
               // Return early
               push(false);
               break;
-            }
-            // Populate key & value
-            final dynamic item = iterable[idx.toInt()];
-            if (item is MapEntry) {
-              stack[frame.slotsIdx + keyIdx] = item.key;
-              stack[frame.slotsIdx + valIdx] = item.value;
             } else {
-              stack[frame.slotsIdx + keyIdx] = idx;
-              stack[frame.slotsIdx + valIdx] = item;
+              // Populate key & value
+              final dynamic item = iterable[idx.toInt()];
+              if (item is MapEntry) {
+                stack[frame.slots_idx + keyIdx] = item.key;
+                stack[frame.slots_idx + valIdx] = item.value;
+              } else {
+                stack[frame.slots_idx + keyIdx] = idx;
+                stack[frame.slots_idx + valIdx] = item;
+              }
+              // Increment index
+              stack[frame.slots_idx + idxIdx] = idx + 1;
+              push(true);
+              break;
             }
-            // Increment index
-            stack[frame.slotsIdx + idxIdx] = idx + 1;
-            push(true);
-            break;
-          }
+        }
       }
+      return null;
     }
-    return null;
   }
 
-  InterpreterResult runtimeError(
-    final String format, [
-    final List<Object?>? args,
-  ]) {
-    var error = addError(sprintf(format, args ?? []));
-    for (var i = frameCount - 2; i >= 0; i--) {
+  InterpreterResult runtime_error(
+      final String format, [
+        final List<Object?>? args,
+      ]) {
+    RuntimeError error = addError(sprintf(format, args ?? []));
+    for (int i = frame_count - 2; i >= 0; i--) {
       final frame = frames[i]!;
       final function = frame.closure.function;
       // frame.ip is sitting on the next instruction
@@ -3627,5 +3474,48 @@ class VM {
     }
     return result;
   }
+}
+
+const int FRAMES_MAX = 64;
+const int STACK_MAX = FRAMES_MAX * UINT8_COUNT;
+const int BATCH_COUNT = 1000000; // Must be fast enough
+
+class CallFrame {
+  late ObjClosure closure;
+  late int ip;
+  late Chunk chunk; // Additionnal reference
+  late int slots_idx; // Index in stack of the frame slot
+
+  CallFrame();
+}
+
+class InterpreterResult {
+  final List<LangError> errors;
+  final int last_line;
+  final int step_count;
+  final Object? return_value;
+
+  InterpreterResult(
+    final List<LangError> errors,
+    this.last_line,
+    this.step_count,
+    this.return_value,
+  ) : errors = List<LangError>.from(errors);
+
+  bool get done {
+    return errors.isNotEmpty || return_value != null;
+  }
+}
+
+class FunctionParams {
+  final String? function;
+  final List<Object>? args;
+  final Map<String?, Object?>? globals;
+
+  const FunctionParams({
+    final this.function,
+    final this.args,
+    final this.globals,
+  });
 }
 // endregion

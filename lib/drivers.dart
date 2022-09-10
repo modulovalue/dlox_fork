@@ -13,7 +13,7 @@ void run_file(
   final source = File(path).readAsStringSync();
   final compilerResult = compile(lex(source));
   if (compilerResult.errors.isNotEmpty) exit(65);
-  vm.setFunction(compilerResult, FunctionParams());
+  vm.set_function(compilerResult, const FunctionParams());
   final intepreterResult = vm.run();
   if (intepreterResult.errors.isNotEmpty) exit(70);
 }
@@ -29,7 +29,7 @@ void run_repl() {
     final compilerResult = compile(lex(line));
     if (compilerResult.errors.isNotEmpty) continue;
     final globals = Map.fromEntries(vm.globals.data.entries);
-    vm.setFunction(compilerResult, FunctionParams(globals: globals));
+    vm.set_function(compilerResult, FunctionParams(globals: globals));
     vm.run();
   }
 }

@@ -121,8 +121,8 @@ class Runtime extends ChangeNotifier {
     run_compilation();
     if (compilerResult == null || compilerResult.errors.isNotEmpty)
       return false;
-    if (vm.compilerResult != compilerResult) {
-      vm.setFunction(compilerResult, FunctionParams());
+    if (vm.compiler_result != compilerResult) {
+      vm.set_function(compilerResult, FunctionParams());
       interpreterResult = null;
     }
     return true;
@@ -138,8 +138,8 @@ class Runtime extends ChangeNotifier {
 
   bool step() {
     if (!_initCode() || done) return false;
-    vm.stepCode = true;
-    interpreterResult = vm.stepBatch();
+    vm.step_code = true;
+    interpreterResult = vm.step_batch();
     _onInterpreterResult();
     return true;
   }
@@ -149,17 +149,17 @@ class Runtime extends ChangeNotifier {
     stopFlag = false;
     running = true;
     notifyListeners();
-    vm.stepCode = false;
+    vm.step_code = false;
     timeStartedMs = DateTime.now().millisecondsSinceEpoch;
 
     while (!done && !stopFlag) {
-      interpreterResult = vm.stepBatch(
+      interpreterResult = vm.step_batch(
         // Cope with expensive tracing
-        batchCount: vm.traceExecution ? 100 : 500000,
+        batch_count: vm.traceExecution ? 100 : 500000,
       );
       // Update Ips counter
       final dt = DateTime.now().millisecondsSinceEpoch - timeStartedMs;
-      averageIps = vm.stepCount / max(dt, 1) * 1000;
+      averageIps = vm.step_count / max(dt, 1) * 1000;
       _onInterpreterResult();
       await Future.delayed(Duration(seconds: 0));
     }
@@ -176,7 +176,7 @@ class Runtime extends ChangeNotifier {
     // Clear output
     clearOutput();
     // Set interpreter
-    vm.setFunction(compilerResult, FunctionParams());
+    vm.set_function(compilerResult, FunctionParams());
     interpreterResult = null;
     onInterpreterResult(interpreterResult);
     notifyListeners();

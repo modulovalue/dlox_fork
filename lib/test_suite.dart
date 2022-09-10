@@ -56,7 +56,7 @@ abstract class DLoxTestSuite {
                     if (errList.isEmpty) {
                       // Run test
                       vm.stdout.clear();
-                      vm.setFunction(compiler_result, FunctionParams());
+                      vm.set_function(compiler_result, const FunctionParams());
                       final intepreter_result = vm.run();
                       // Interpreter errors
                       err_exp = RegExp(r'// Runtime error:(.+)');

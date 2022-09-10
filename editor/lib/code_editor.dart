@@ -85,7 +85,7 @@ class CodeEditorState extends State<CodeEditor> {
         style: style.copyWith(color: Colors.red),
         recognizer: TapGestureRecognizer()..onTap = () => print('OnTap'),
       );
-    if (interpreterResult?.lastLine == line - 1)
+    if (interpreterResult?.last_line == line - 1)
       return TextSpan(
         text: ">",
         style: style.copyWith(

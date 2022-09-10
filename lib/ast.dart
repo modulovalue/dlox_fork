@@ -53,7 +53,11 @@ class DeclarationFun implements Declaration {
 }
 
 class DeclarationVari implements Declaration {
-  const DeclarationVari();
+  final List<Expr> exprs;
+
+  const DeclarationVari({
+    required final this.exprs,
+  });
 
   @override
   Z match<Z>({
@@ -98,6 +102,7 @@ abstract class Stmt {
   Z match<Z>({
     required final Z Function(StmtOutput) output,
     required final Z Function(StmtLoop) loop,
+    required final Z Function(StmtLoop2) loop2,
     required final Z Function(StmtConditional) conditional,
     required final Z Function(StmtRet) ret,
     required final Z Function(StmtWhil) whil,
@@ -107,12 +112,17 @@ abstract class Stmt {
 }
 
 class StmtOutput implements Stmt {
-  const StmtOutput();
+  final Expr expr;
+
+  const StmtOutput({
+    required final this.expr,
+  });
 
   @override
   Z match<Z>({
     required final Z Function(StmtOutput) output,
     required final Z Function(StmtLoop) loop,
+    required final Z Function(StmtLoop2) loop2,
     required final Z Function(StmtConditional) conditional,
     required final Z Function(StmtRet) ret,
     required final Z Function(StmtWhil) whil,
@@ -122,12 +132,23 @@ class StmtOutput implements Stmt {
 }
 
 class StmtLoop implements Stmt {
-  const StmtLoop();
+  final LoopLeft? left;
+  final Expr? center;
+  final Expr? right;
+  final Stmt body;
+
+  const StmtLoop({
+    required final this.left,
+    required final this.center,
+    required final this.right,
+    required final this.body,
+  });
 
   @override
   Z match<Z>({
     required final Z Function(StmtOutput) output,
     required final Z Function(StmtLoop) loop,
+    required final Z Function(StmtLoop2) loop2,
     required final Z Function(StmtConditional) conditional,
     required final Z Function(StmtRet) ret,
     required final Z Function(StmtWhil) whil,
@@ -136,13 +157,42 @@ class StmtLoop implements Stmt {
   }) => loop(this);
 }
 
-class StmtConditional implements Stmt {
-  const StmtConditional();
+class StmtLoop2 implements Stmt {
+  final Expr center;
+  final Stmt body;
+
+  const StmtLoop2({
+    required final this.center,
+    required final this.body,
+  });
 
   @override
   Z match<Z>({
     required final Z Function(StmtOutput) output,
     required final Z Function(StmtLoop) loop,
+    required final Z Function(StmtLoop2) loop2,
+    required final Z Function(StmtConditional) conditional,
+    required final Z Function(StmtRet) ret,
+    required final Z Function(StmtWhil) whil,
+    required final Z Function(StmtBlock) block,
+    required final Z Function(StmtExpr) expr,
+  }) => loop2(this);
+}
+
+class StmtConditional implements Stmt {
+  final Expr expr;
+  final Stmt stmt;
+
+  const StmtConditional({
+    required final this.expr,
+    required final this.stmt,
+  });
+
+  @override
+  Z match<Z>({
+    required final Z Function(StmtOutput) output,
+    required final Z Function(StmtLoop) loop,
+    required final Z Function(StmtLoop2) loop2,
     required final Z Function(StmtConditional) conditional,
     required final Z Function(StmtRet) ret,
     required final Z Function(StmtWhil) whil,
@@ -152,12 +202,17 @@ class StmtConditional implements Stmt {
 }
 
 class StmtRet implements Stmt {
-  const StmtRet();
+  final Expr? expr;
+
+  const StmtRet({
+    required final this.expr,
+  });
 
   @override
   Z match<Z>({
     required final Z Function(StmtOutput) output,
     required final Z Function(StmtLoop) loop,
+    required final Z Function(StmtLoop2) loop2,
     required final Z Function(StmtConditional) conditional,
     required final Z Function(StmtRet) ret,
     required final Z Function(StmtWhil) whil,
@@ -167,12 +222,19 @@ class StmtRet implements Stmt {
 }
 
 class StmtWhil implements Stmt {
-  const StmtWhil();
+  final Expr expr;
+  final Stmt stmt;
+
+  const StmtWhil({
+    required final this.expr,
+    required final this.stmt,
+  });
 
   @override
   Z match<Z>({
     required final Z Function(StmtOutput) output,
     required final Z Function(StmtLoop) loop,
+    required final Z Function(StmtLoop2) loop2,
     required final Z Function(StmtConditional) conditional,
     required final Z Function(StmtRet) ret,
     required final Z Function(StmtWhil) whil,
@@ -182,12 +244,17 @@ class StmtWhil implements Stmt {
 }
 
 class StmtBlock implements Stmt {
-  const StmtBlock();
+  final Block block;
+
+  const StmtBlock({
+    required final this.block,
+  });
 
   @override
   Z match<Z>({
     required final Z Function(StmtOutput) output,
     required final Z Function(StmtLoop) loop,
+    required final Z Function(StmtLoop2) loop2,
     required final Z Function(StmtConditional) conditional,
     required final Z Function(StmtRet) ret,
     required final Z Function(StmtWhil) whil,
@@ -207,6 +274,7 @@ class StmtExpr implements Stmt {
   Z match<Z>({
     required final Z Function(StmtOutput) output,
     required final Z Function(StmtLoop) loop,
+    required final Z Function(StmtLoop2) loop2,
     required final Z Function(StmtConditional) conditional,
     required final Z Function(StmtRet) ret,
     required final Z Function(StmtWhil) whil,
@@ -214,9 +282,97 @@ class StmtExpr implements Stmt {
     required final Z Function(StmtExpr) expr,
   }) => expr(this);
 }
+
+abstract class LoopLeft {}
+
+class LoopLeftVari implements LoopLeft {
+  final DeclarationVari decl;
+
+  const LoopLeftVari({
+    required final this.decl,
+  });
+}
+
+class LoopLeftExpr implements LoopLeft {
+  final Expr expr;
+
+  const LoopLeftExpr({
+    required final this.expr,
+  });
+}
 // endregion
 
 // region expr
-// TODO hierarchy
-class Expr {}
+class Expr {
+  // Z match<Z>({
+  //   required final Z Function(ExprMap) map,
+  //   required final Z Function(ExprMap) call,
+  //   required final Z Function(ExprMap) invoke,
+  //   required final Z Function(ExprMap) get,
+  //   required final Z Function(ExprMap) set,
+  //   required final Z Function(ExprMap) list,
+  // });
+}
+
+class ExprMap implements Expr {
+  final List<ExprmapMapEntry> entries;
+
+  const ExprMap({
+    required final this.entries,
+  });
+}
+
+class ExprCall implements Expr {
+  final List<Expr> args;
+
+  const ExprCall({
+    required final this.args,
+  });
+}
+
+class ExprInvoke implements Expr {
+  final List<Expr> args;
+  final NaturalToken name;
+
+  const ExprInvoke({
+    required final this.args,
+    required final this.name,
+  });
+}
+
+class ExprGet implements Expr {
+  final NaturalToken name;
+
+  const ExprGet({
+    required final this.name,
+  });
+}
+
+class ExprSet implements Expr {
+  final Expr arg;
+  final NaturalToken name;
+
+  const ExprSet({
+    required final this.arg,
+    required final this.name,
+  });
+}
+
+class ExprList implements Expr {
+  final List<Expr> values;
+
+  const ExprList({
+    required final this.values,
+  });
+}
+
+class ExprmapMapEntry {
+  final Expr key;
+  final Expr value;
+
+  const ExprmapMapEntry({
+    required final this.key,
+    required final this.value,
+  });
+}
 // endregion
