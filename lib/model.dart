@@ -70,7 +70,7 @@ enum TokenType {
   EOF,
 }
 
-// TODO migrate to store an absolute offset and no line information.
+// TODO migrate to store and absolute offset and no line information.
 abstract class Loc {
   int get line;
 }

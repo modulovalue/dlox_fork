@@ -11,7 +11,7 @@ void run_file(
     silent: false,
   );
   final source = File(path).readAsStringSync();
-  final compilerResult = Compiler.compile(lex(source));
+  final compilerResult = compile(lex(source));
   if (compilerResult.errors.isNotEmpty) exit(65);
   vm.setFunction(compilerResult, FunctionParams());
   final intepreterResult = vm.run();
@@ -26,7 +26,7 @@ void run_repl() {
     stdout.write('> ');
     final line = stdin.readLineSync(encoding: Encoding.getByName('utf-8')!);
     if (line == null) break;
-    final compilerResult = Compiler.compile(lex(line));
+    final compilerResult = compile(lex(line));
     if (compilerResult.errors.isNotEmpty) continue;
     final globals = Map.fromEntries(vm.globals.data.entries);
     vm.setFunction(compilerResult, FunctionParams(globals: globals));

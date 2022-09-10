@@ -79,7 +79,7 @@ class Runtime extends ChangeNotifier {
     if (compileTimer != null) compileTimer.cancel();
     compileTimer = Timer(Duration(milliseconds: 500), () {
       compileTimer = null;
-      compile();
+      run_compilation();
     });
   }
 
@@ -87,27 +87,29 @@ class Runtime extends ChangeNotifier {
     vm.traceExecution = enabled;
   }
 
-  void compile() {
-    if (source == null || (compiledSource == source && compilerResult != null))
+  void run_compilation() {
+    if (source == null || (compiledSource == source && compilerResult != null)) {
       return;
-    // Clear interpeter output
-    interpreterResult = null;
-    onInterpreterResult(interpreterResult);
-    // Clear monitors
-    compilerOut.clear();
-    clearOutput();
-    // Compile
-    compilerResult = Compiler.compile(
-      lex(source),
-      silent: true,
-      traceBytecode: true,
-    );
-    compiledSource = source;
-    // Populate result
-    final str = compilerResult.debug.buf.toString();
-    _populateBuffer(compilerOut, str);
-    _processErrors(compilerResult.errors);
-    onCompilerResult(compilerResult);
+    } else {
+      // Clear interpeter output
+      interpreterResult = null;
+      onInterpreterResult(interpreterResult);
+      // Clear monitors
+      compilerOut.clear();
+      clearOutput();
+      // Compile
+      compilerResult = compile(
+        lex(source),
+        silent: true,
+        traceBytecode: true,
+      );
+      compiledSource = source;
+      // Populate result
+      final str = compilerResult.debug.buf.toString();
+      _populateBuffer(compilerOut, str);
+      _processErrors(compilerResult.errors);
+      onCompilerResult(compilerResult);
+    }
   }
 
   bool get done {
@@ -116,7 +118,7 @@ class Runtime extends ChangeNotifier {
 
   bool _initCode() {
     // Compile if needed
-    compile();
+    run_compilation();
     if (compilerResult == null || compilerResult.errors.isNotEmpty)
       return false;
     if (vm.compilerResult != compilerResult) {

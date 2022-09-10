@@ -5,6 +5,7 @@ environment:
   sdk: '>=2.16.0 <3.0.0'
 
 dependencies:
+  # TODO remove sprintf
   sprintf: ^6.0.0
 
 dev_dependencies:

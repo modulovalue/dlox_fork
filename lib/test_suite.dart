@@ -36,7 +36,7 @@ abstract class DLoxTestSuite {
                   lineNumber.add(line);
                 }
                 // Compile test
-                final compilerResult = Compiler.compile(
+                final compilerResult = compile(
                   deps.lexer(source),
                   silent: true,
                 );
