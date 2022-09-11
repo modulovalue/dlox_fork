@@ -4,6 +4,7 @@ import 'package:path/path.dart';
 
 import 'compiler.dart';
 import 'model.dart';
+import 'vm.dart';
 
 // TODO have fixtures for the lexer in the style of esprima.
 // TODO have a benchmark suite that exposes just files.
@@ -36,9 +37,12 @@ abstract class DLoxTestSuite {
                   line_number.add(line);
                 }
                 // Compile test
-                final compiler_result = compile(
-                  deps.lexer(source),
+                final compiler_result = run_compiler(
+                  tokens: deps.lexer(
+                    source,
+                  ),
                   silent: true,
+                  trace_bytecode: false,
                 );
                 // Compiler error
                 RegExp err_exp = RegExp(r'// Error at (.+):(.+)');

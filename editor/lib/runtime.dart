@@ -3,186 +3,217 @@ import 'dart:math';
 
 import 'package:dlox/compiler.dart';
 import 'package:dlox/lexer.dart';
+import 'package:dlox/vm.dart';
 import 'package:flutter/material.dart';
 
 class Runtime extends ChangeNotifier {
   // State hooks
   String source;
-  final Function(CompilerResult) onCompilerResult;
-  final Function(InterpreterResult) onInterpreterResult;
+  final Function(CompilerResult) on_compiler_result;
+  final Function(InterpreterResult) on_interpreter_result;
 
   // Compiler timer
-  Timer compileTimer;
+  Timer compile_timer;
 
   // Code variables
   VM vm;
-  String compiledSource;
-  CompilerResult compilerResult;
-  InterpreterResult interpreterResult;
+  String compiled_source;
+  CompilerResult compiler_result;
+  InterpreterResult interpreter_result;
   bool running = false;
-  bool stopFlag = false;
-  bool vmTraceEnabled = true;
+  bool stop_flag = false;
+  bool vm_trace_enabled = true;
 
   // Performance tracking
-  int timeStartedMs;
-  double averageIps = 0;
+  int time_started_ms;
+  double average_ips = 0;
 
   // Buffers variables
   final stdout = <String>[];
-  final vmOut = <String>[];
-  final compilerOut = <String>[];
+  final vm_out = <String>[];
+  final compiler_out = <String>[];
 
   Runtime({
-    this.onCompilerResult,
-    this.onInterpreterResult,
+    this.on_compiler_result,
+    this.on_interpreter_result,
   }) {
-    vm = VM(silent: true);
-    vm.traceExecution = true;
+    vm = VM(
+      silent: true,
+    );
+    vm.trace_execution = true;
   }
 
-  void _populateBuffer(List<String> buf, String str) {
-    if (str == null) return;
-    str.trim().split("\n").where((line) => line.isNotEmpty).forEach((line) {
+  void _populate_buffer(
+    List<String> buf,
+    String str,
+  ) {
+    if (str == null) {
+      return;
+    }
+    str.trim().split("\n").where((line) => line.isNotEmpty).forEach((final line) {
       buf.add(line);
     });
     notifyListeners();
   }
 
-  void _processErrors(List<LangError> errors) {
+  void _process_errors(
+    List<LangError> errors,
+  ) {
     if (errors == null) return;
     errors.forEach((err) {
-      _populateBuffer(stdout, err.toString());
+      _populate_buffer(stdout, err.toString());
     });
     notifyListeners();
   }
 
-  void toggleVmTrace() {
-    vmTraceEnabled = !vmTraceEnabled;
-    vm.traceExecution = vmTraceEnabled;
-    if (!vmTraceEnabled) vmOut.clear();
+  void toggle_vm_trace() {
+    vm_trace_enabled = !vm_trace_enabled;
+    vm.trace_execution = vm_trace_enabled;
+    if (!vm_trace_enabled) {
+      vm_out.clear();
+    }
     notifyListeners();
   }
 
-  void clearOutput() {
+  void clear_output() {
     stdout.clear();
-    vmOut.clear();
+    vm_out.clear();
     notifyListeners();
   }
 
   void dispose() {
-    if (compileTimer != null) compileTimer.cancel();
+    if (compile_timer != null) {
+      compile_timer.cancel();
+    }
     super.dispose();
   }
 
-  void setSource(String source) {
+  void set_source(
+    String source,
+  ) {
     this.source = source;
-    if (compileTimer != null) compileTimer.cancel();
-    compileTimer = Timer(Duration(milliseconds: 500), () {
-      compileTimer = null;
+    if (compile_timer != null) {
+      compile_timer.cancel();
+    }
+    compile_timer = Timer(Duration(milliseconds: 500), () {
+      compile_timer = null;
       run_compilation();
     });
   }
 
-  void setTracer(bool enabled) {
-    vm.traceExecution = enabled;
+  void set_tracer(
+    bool enabled,
+  ) {
+    vm.trace_execution = enabled;
   }
 
   void run_compilation() {
-    if (source == null || (compiledSource == source && compilerResult != null)) {
+    if (source == null || (compiled_source == source && compiler_result != null)) {
       return;
     } else {
       // Clear interpeter output
-      interpreterResult = null;
-      onInterpreterResult(interpreterResult);
+      interpreter_result = null;
+      on_interpreter_result(interpreter_result);
       // Clear monitors
-      compilerOut.clear();
-      clearOutput();
+      compiler_out.clear();
+      clear_output();
       // Compile
-      compilerResult = compile(
-        lex(source),
+      compiler_result = run_compiler(
+        tokens: run_lexer(
+          source: source,
+        ),
         silent: true,
-        traceBytecode: true,
+        trace_bytecode: true,
       );
-      compiledSource = source;
+      compiled_source = source;
       // Populate result
-      final str = compilerResult.debug.buf.toString();
-      _populateBuffer(compilerOut, str);
-      _processErrors(compilerResult.errors);
-      onCompilerResult(compilerResult);
+      final str = compiler_result.debug.buf.toString();
+      _populate_buffer(compiler_out, str);
+      _process_errors(compiler_result.errors);
+      on_compiler_result(compiler_result);
     }
   }
 
   bool get done {
-    return interpreterResult?.done ?? false;
+    return interpreter_result?.done ?? false;
   }
 
-  bool _initCode() {
+  bool _init_code() {
     // Compile if needed
     run_compilation();
-    if (compilerResult == null || compilerResult.errors.isNotEmpty)
+    if (compiler_result == null || compiler_result.errors.isNotEmpty) {
       return false;
-    if (vm.compiler_result != compilerResult) {
-      vm.set_function(compilerResult, FunctionParams());
-      interpreterResult = null;
+    }
+    if (vm.compiler_result != compiler_result) {
+      vm.set_function(compiler_result, FunctionParams());
+      interpreter_result = null;
     }
     return true;
   }
 
-  void _onInterpreterResult() {
-    _populateBuffer(stdout, vm.stdout.clear());
-    _populateBuffer(vmOut, vm.trace_debug.clear());
-    _processErrors(interpreterResult?.errors);
-    onInterpreterResult(interpreterResult);
+  void _on_interpreter_result() {
+    _populate_buffer(stdout, vm.stdout.clear());
+    _populate_buffer(vm_out, vm.trace_debug.clear());
+    _process_errors(interpreter_result?.errors);
+    on_interpreter_result(interpreter_result);
     notifyListeners();
   }
 
   bool step() {
-    if (!_initCode() || done) return false;
+    if (!_init_code() || done) {
+      return false;
+    }
     vm.step_code = true;
-    interpreterResult = vm.step_batch();
-    _onInterpreterResult();
+    interpreter_result = vm.step_batch();
+    _on_interpreter_result();
     return true;
   }
 
   Future<bool> run() async {
-    if (!_initCode()) return false;
-    stopFlag = false;
+    if (!_init_code()) {
+      return false;
+    }
+    stop_flag = false;
     running = true;
     notifyListeners();
     vm.step_code = false;
-    timeStartedMs = DateTime.now().millisecondsSinceEpoch;
-
-    while (!done && !stopFlag) {
-      interpreterResult = vm.step_batch(
+    time_started_ms = DateTime.now().millisecondsSinceEpoch;
+    while (!done && !stop_flag) {
+      interpreter_result = vm.step_batch(
         // Cope with expensive tracing
-        batch_count: vm.traceExecution ? 100 : 500000,
+        batch_count: vm.trace_execution ? 100 : 500000,
       );
       // Update Ips counter
-      final dt = DateTime.now().millisecondsSinceEpoch - timeStartedMs;
-      averageIps = vm.step_count / max(dt, 1) * 1000;
-      _onInterpreterResult();
+      final dt = DateTime.now().millisecondsSinceEpoch - time_started_ms;
+      average_ips = vm.step_count / max(dt, 1) * 1000;
+      _on_interpreter_result();
       await Future.delayed(Duration(seconds: 0));
     }
-
-    stopFlag = false;
+    stop_flag = false;
     running = false;
     notifyListeners();
     return true;
   }
 
   void reset() {
-    if (compilerResult == null) return;
-    if (compilerResult.errors.isNotEmpty) return;
+    if (compiler_result == null) {
+      return;
+    }
+    if (compiler_result.errors.isNotEmpty) {
+      return;
+    }
     // Clear output
-    clearOutput();
+    clear_output();
     // Set interpreter
-    vm.set_function(compilerResult, FunctionParams());
-    interpreterResult = null;
-    onInterpreterResult(interpreterResult);
+    vm.set_function(compiler_result, FunctionParams());
+    interpreter_result = null;
+    on_interpreter_result(interpreter_result);
     notifyListeners();
   }
 
   void stop() {
-    if (running) stopFlag = true;
+    if (running) {
+      stop_flag = true;
+    }
   }
 }

@@ -48,13 +48,13 @@ class _RuntimeToolbarState extends State<RuntimeToolbar> {
 
   Widget buildSpeedBtn(BuildContext context) {
     final runtime = context.watch<Runtime>();
-    final enabled = !runtime.vmTraceEnabled;
+    final enabled = !runtime.vm_trace_enabled;
     final color = enabled ? Colors.grey.shade800 : Colors.transparent;
     final iconColor = enabled ? Colors.white : Colors.grey;
     final btn = RawMaterialButton(
       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
       padding: EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
-      onPressed: () => runtime.toggleVmTrace(),
+      onPressed: () => runtime.toggle_vm_trace(),
       constraints: BoxConstraints(minWidth: 0, minHeight: 0),
       child: Icon(MaterialCommunityIcons.speedometer, color: iconColor),
       fillColor: color,
@@ -63,7 +63,7 @@ class _RuntimeToolbarState extends State<RuntimeToolbar> {
         borderRadius: BorderRadius.all(Radius.circular(8.0)),
       ),
     );
-    double ips = runtime.averageIps.toDouble();
+    double ips = runtime.average_ips.toDouble();
     var suffix = "";
     if (ips > 1000000) {
       ips /= 1000000;

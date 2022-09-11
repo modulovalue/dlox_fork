@@ -7,7 +7,9 @@ import 'package:test/test.dart';
 Future<void> main() async {
   DLoxTestSuite.run(
     deps: DLoxTestSuiteDependencies(
-      lexer: lex,
+      lexer: (final source) => run_lexer(
+        source: source,
+      ),
       dlox_lib_path: (await Isolate.resolvePackageUri(Uri.parse("package:dlox/")))!,
     ),
     wrapper: DLoxTestSuiteWrapper<void>(

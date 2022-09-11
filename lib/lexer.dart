@@ -1,9 +1,8 @@
-// region lexer
 import 'model.dart';
 
-List<NaturalToken> lex(
-  final String source,
-) {
+List<NaturalToken> run_lexer({
+  required final String source,
+}) {
   final lexer = _Lexer._(
     source: source,
   );
@@ -301,4 +300,3 @@ class _Lexer {
     return errorToken('Unexpected character: $c.');
   }
 }
-// endregion

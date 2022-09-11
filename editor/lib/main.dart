@@ -45,10 +45,10 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     runtime = Runtime(
-      onCompilerResult: (res) {
+      on_compiler_result: (res) {
         editorKey.currentState?.setCompilerResult(res);
       },
-      onInterpreterResult: (res) {
+      on_interpreter_result: (res) {
         editorKey.currentState?.setInterpreterResult(res);
       },
     );
@@ -82,17 +82,17 @@ class _HomePageState extends State<HomePage> {
     final compilerMonitor = Monitor(
       autoScroll: false,
       key: compilerKey,
-      lines: runtime.compilerOut,
+      lines: runtime.compiler_out,
       icon: MaterialCommunityIcons.matrix,
       title: "Bytecode",
     );
     var monitorTitle = "VM trace";
     final vmMonitor = Monitor(
       key: vmKey,
-      lines: runtime.vmOut,
+      lines: runtime.vm_out,
       icon: MaterialCommunityIcons.magnify,
       placeholderBuilder: (widget) {
-        if (!runtime.vmTraceEnabled)
+        if (!runtime.vm_trace_enabled)
           return Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -108,7 +108,7 @@ class _HomePageState extends State<HomePage> {
     );
     final runtimeToolbar = RuntimeToolbar(
       layout: layout,
-      onClear: () => runtime.clearOutput(),
+      onClear: () => runtime.clear_output(),
     );
     final editorToolbar = EditorToolbar(
       layout: layout,

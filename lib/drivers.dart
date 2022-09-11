@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'compiler.dart';
 import 'lexer.dart';
+import 'vm.dart';
 
 void run_file(
   final String path,
@@ -11,7 +12,13 @@ void run_file(
     silent: false,
   );
   final source = File(path).readAsStringSync();
-  final compilerResult = compile(lex(source));
+  final compilerResult = run_compiler(
+    tokens: run_lexer(
+      source: source,
+    ),
+    silent: false,
+    trace_bytecode: false,
+  );
   if (compilerResult.errors.isNotEmpty) exit(65);
   vm.set_function(compilerResult, const FunctionParams());
   final intepreterResult = vm.run();
@@ -26,7 +33,13 @@ void run_repl() {
     stdout.write('> ');
     final line = stdin.readLineSync(encoding: Encoding.getByName('utf-8')!);
     if (line == null) break;
-    final compilerResult = compile(lex(line));
+    final compilerResult = run_compiler(
+      tokens: run_lexer(
+        source: line,
+      ),
+      silent: false,
+      trace_bytecode: false,
+    );
     if (compilerResult.errors.isNotEmpty) continue;
     final globals = Map.fromEntries(vm.globals.data.entries);
     vm.set_function(compilerResult, FunctionParams(globals: globals));

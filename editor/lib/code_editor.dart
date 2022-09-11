@@ -1,6 +1,7 @@
 import 'package:editor/lox_mode.dart';
 import 'package:editor/runtime.dart';
 import 'package:dlox/compiler.dart';
+import 'package:dlox/vm.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_highlight/themes/monokai-sublime.dart';
@@ -49,7 +50,7 @@ class CodeEditorState extends State<CodeEditor> {
   }
 
   void _onSourceChange() {
-    widget.runtime.setSource(_codeController.rawText);
+    widget.runtime.set_source(_codeController.rawText);
   }
 
   void _setErrors(List<LangError> errors) {
