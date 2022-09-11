@@ -16,7 +16,9 @@ void run_file(
     tokens: run_lexer(
       source: source,
     ),
-    silent: false,
+    debug: Debug(
+      false,
+    ),
     trace_bytecode: false,
   );
   if (compilerResult.errors.isNotEmpty) exit(65);
@@ -37,7 +39,9 @@ void run_repl() {
       tokens: run_lexer(
         source: line,
       ),
-      silent: false,
+      debug: Debug(
+        false,
+      ),
       trace_bytecode: false,
     );
     if (compilerResult.errors.isNotEmpty) continue;

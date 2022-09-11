@@ -23,7 +23,7 @@ class CodeEditor extends StatefulWidget {
 class CodeEditorState extends State<CodeEditor> {
   CodeController _codeController;
   InterpreterResult interpreterResult;
-  CompilerResult compilerResult;
+  CompilationResult compilerResult;
   final errorMap = <int, List<LangError>>{};
 
   @override
@@ -64,7 +64,7 @@ class CodeEditorState extends State<CodeEditor> {
     setState(() {});
   }
 
-  void setCompilerResult(CompilerResult result) {
+  void setCompilerResult(CompilationResult result) {
     this.compilerResult = result;
     _setErrors(result?.errors);
   }

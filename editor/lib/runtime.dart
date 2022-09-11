@@ -9,7 +9,7 @@ import 'package:flutter/material.dart';
 class Runtime extends ChangeNotifier {
   // State hooks
   String source;
-  final Function(CompilerResult) on_compiler_result;
+  final Function(CompilationResult) on_compiler_result;
   final Function(InterpreterResult) on_interpreter_result;
 
   // Compiler timer
@@ -18,7 +18,7 @@ class Runtime extends ChangeNotifier {
   // Code variables
   VM vm;
   String compiled_source;
-  CompilerResult compiler_result;
+  CompilationResult compiler_result;
   InterpreterResult interpreter_result;
   bool running = false;
   bool stop_flag = false;
@@ -108,26 +108,27 @@ class Runtime extends ChangeNotifier {
   }
 
   void run_compilation() {
-    if (source == null || (compiled_source == source && compiler_result != null)) {
-      return;
-    } else {
-      // Clear interpeter output
+    if (source != null && (compiled_source != source || compiler_result == null)) {
+      // Clear interpreter output.
       interpreter_result = null;
       on_interpreter_result(interpreter_result);
-      // Clear monitors
+      // Clear monitors.
       compiler_out.clear();
       clear_output();
-      // Compile
+      // Compile.
+      final debug = Debug(
+        true,
+      );
       compiler_result = run_compiler(
         tokens: run_lexer(
           source: source,
         ),
-        silent: true,
+        debug: debug,
         trace_bytecode: true,
       );
       compiled_source = source;
       // Populate result
-      final str = compiler_result.debug.buf.toString();
+      final str = debug.buf.toString();
       _populate_buffer(compiler_out, str);
       _process_errors(compiler_result.errors);
       on_compiler_result(compiler_result);

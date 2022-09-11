@@ -3,11 +3,11 @@ import 'model.dart';
 
 MapEntry<Parser, ErrorDelegate> make_parser({
   required final List<NaturalToken> tokens,
-  required final bool silent,
+  required final Debug debug,
 }) {
   final parser = _ParserImpl(
     tokens: tokens,
-    silent: silent,
+    debug: debug,
   );
   return MapEntry(parser, parser);
 }
@@ -30,13 +30,10 @@ class _ParserImpl implements Parser, ErrorDelegate {
 
   _ParserImpl({
     required final this.tokens,
-    required final bool silent,
-  })  : debug = Debug(
-          silent: silent,
-        ),
-        errors = [],
-        current_idx = 0,
-        panic_mode = false;
+    required final this.debug,
+  }) : errors = [],
+      current_idx = 0,
+      panic_mode = false;
 
   void error_at(
     final NaturalToken? token,

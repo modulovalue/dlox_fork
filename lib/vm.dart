@@ -5,7 +5,7 @@ import 'package:sprintf/sprintf.dart';
 import 'compiler.dart'
     show
         Chunk,
-        CompilerResult,
+        CompilationResult,
         Debug,
         LIST_NATIVE_FUNCTIONS,
         LangError,
@@ -41,7 +41,7 @@ class VM {
   final List<RuntimeError> errors = [];
   final Table globals = Table();
   final Table strings = Table();
-  CompilerResult? compiler_result;
+  CompilationResult? compiler_result;
   int frame_count = 0;
   int stack_top = 0;
   ObjUpvalue? open_upvalues;
@@ -64,13 +64,13 @@ class VM {
     required final bool silent,
   }) {
     err_debug = Debug(
-      silent: silent,
+      silent,
     );
     trace_debug = Debug(
-      silent: silent,
+      silent,
     );
     stdout = Debug(
-      silent: silent,
+      silent,
     );
     _reset();
     for (var k = 0; k < frames.length; k++) {
@@ -140,7 +140,7 @@ class VM {
   }
 
   void set_function(
-    final CompilerResult compiler_result,
+    final CompilationResult compiler_result,
     final FunctionParams params,
   ) {
     _reset();
@@ -1078,16 +1078,22 @@ class FunctionParams {
   });
 }
 
-class RuntimeError extends LangError {
+class RuntimeError with LangError {
   final RuntimeError? link;
+  @override
+  final int line;
+  @override
+  final String? msg;
 
-  RuntimeError(
-      final int line,
-      final String? msg, {
-        this.link,
-      }) : super(
-    'Runtime',
-    msg,
-    line: line,
-  );
+  const RuntimeError(
+    final this.line,
+    final this.msg, {
+    final this.link,
+  });
+
+  @override
+  String get type => "Runtime";
+
+  @override
+  Null get token => null;
 }

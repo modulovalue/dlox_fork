@@ -21,7 +21,11 @@ abstract class Declaration {
 }
 
 class DeclarationClazz implements Declaration {
-  const DeclarationClazz();
+  final List<Block> functions;
+
+  const DeclarationClazz({
+    required final this.functions,
+  });
 
   @override
   Z match<Z>({
@@ -364,6 +368,10 @@ class ExprList implements Expr {
   const ExprList({
     required final this.values,
   });
+}
+
+class ExprNil implements Expr {
+  const ExprNil();
 }
 
 class ExprmapMapEntry {
