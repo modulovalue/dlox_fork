@@ -1,3 +1,4 @@
+import 'ast.dart';
 import 'compiler.dart';
 import 'model.dart';
 
@@ -9,11 +10,11 @@ MapEntry<Parser, ErrorDelegate> make_parser({
     tokens: tokens,
     debug: debug,
   );
+  parser.advance();
   return MapEntry(parser, parser);
 }
 
 class _ParserImpl implements Parser, ErrorDelegate {
-  @override
   final List<NaturalToken> tokens;
   @override
   final List<CompilerError> errors;
@@ -23,7 +24,6 @@ class _ParserImpl implements Parser, ErrorDelegate {
   NaturalToken? current;
   @override
   NaturalToken? previous;
-  @override
   int current_idx;
   @override
   bool panic_mode;
@@ -43,7 +43,10 @@ class _ParserImpl implements Parser, ErrorDelegate {
       return;
     } else {
       panic_mode = true;
-      final error = CompilerError(token!, message);
+      final error = CompilerError(
+        token: token!,
+        msg: message,
+      );
       errors.add(error);
       error.dump(debug);
     }
@@ -70,7 +73,7 @@ class _ParserImpl implements Parser, ErrorDelegate {
       current = tokens[current_idx++];
       // Skip invalid tokens.
       if (current!.type == TokenType.ERROR) {
-        error_at_current(current!.str);
+        error_at_current(current!.lexeme);
       } else if (current!.type != TokenType.COMMENT) {
         break;
       }
@@ -121,16 +124,32 @@ class _ParserImpl implements Parser, ErrorDelegate {
       return false;
     }
   }
+
+  @override
+  ArgumentList parse_argument_list(
+    final Expr Function() parse_expression,
+  ) {
+    final args = <Expr>[];
+    if (!check(TokenType.RIGHT_PAREN)) {
+      do {
+        args.add(parse_expression());
+        if (args.length == 256) {
+          error_at_previous("Can't have more than 255 arguments");
+        }
+      } while (match(TokenType.COMMA));
+    }
+    consume(TokenType.RIGHT_PAREN, "Expect ')' after arguments");
+    return ArgumentList(
+      args: args,
+    );
+}
 }
 
+// TODO hide all the low level stuff once parsing is split from compilation.
 abstract class Parser {
-  abstract final List<NaturalToken> tokens;
-
   abstract NaturalToken? current;
 
   abstract NaturalToken? previous;
-
-  abstract int current_idx;
 
   abstract bool panic_mode;
 
@@ -152,6 +171,10 @@ abstract class Parser {
 
   bool match(
     final TokenType type,
+  );
+
+  ArgumentList parse_argument_list(
+    final Expr Function() parse_expression,
   );
 }
 
@@ -294,5 +317,30 @@ Precedence get_precedence(
 Precedence get_next_precedence(
   final TokenType type,
 ) {
-  return Precedence.values[get_precedence(type).index + 1];
+  switch(get_precedence(type)) {
+    case Precedence.NONE:
+      return Precedence.ASSIGNMENT;
+    case Precedence.ASSIGNMENT:
+      return Precedence.OR;
+    case Precedence.OR:
+      return Precedence.AND;
+    case Precedence.AND:
+      return Precedence.EQUALITY;
+    case Precedence.EQUALITY:
+      return Precedence.COMPARISON;
+    case Precedence.COMPARISON:
+      return Precedence.TERM;
+    case Precedence.TERM:
+      return Precedence.FACTOR;
+    case Precedence.FACTOR:
+      return Precedence.POWER;
+    case Precedence.POWER:
+      return Precedence.UNARY;
+    case Precedence.UNARY:
+      return Precedence.CALL;
+    case Precedence.CALL:
+      return Precedence.PRIMARY;
+    case Precedence.PRIMARY:
+      throw Exception("Invalid State");
+  }
 }

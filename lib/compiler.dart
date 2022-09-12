@@ -17,20 +17,18 @@ CompilationResult run_compiler({
     tokens: tokens,
     debug: debug,
   );
+  final _parser = ParserAtCompiler(
+    parser: parser.key,
+    error_delegate: parser.value,
+  );
   final compiler = CompilerRootImpl(
     type: FunctionType.SCRIPT,
     parser: parser.key,
     error_delegate: parser.value,
     debug_trace_bytecode: trace_bytecode,
   );
-  parser.key.advance();
-  final _parser = ParserAtCompiler(
-    parser: parser.key,
-    error_delegate: parser.value,
-    compiler: compiler,
-  );
   while (!parser.key.match(TokenType.EOF)) {
-    _parser.declaration();
+    _parser.declaration(compiler);
   }
   final function = compiler.end_compiler();
   return CompilationResult(
@@ -79,13 +77,13 @@ class CompilerRootImpl with CompilerMixin {
           final function = ObjFunction();
           switch (type) {
             case FunctionType.FUNCTION:
-              function.name = parser.previous!.str;
+              function.name = parser.previous!.lexeme;
               break;
             case FunctionType.INITIALIZER:
-              function.name = parser.previous!.str;
+              function.name = parser.previous!.lexeme;
               break;
             case FunctionType.METHOD:
-              function.name = parser.previous!.str;
+              function.name = parser.previous!.lexeme;
               break;
             case FunctionType.SCRIPT:
               break;
@@ -94,9 +92,9 @@ class CompilerRootImpl with CompilerMixin {
         }()),
         locals = [
           Local(
-            SyntheticTokenImpl(
+            name: SyntheticTokenImpl(
               type: TokenType.FUN,
-              str: () {
+              lexeme: () {
                 if (type != FunctionType.FUNCTION) {
                   return 'this';
                 } else {
@@ -105,12 +103,18 @@ class CompilerRootImpl with CompilerMixin {
               }(),
             ),
             depth: 0,
+            is_captured: false,
           ),
         ],
         upvalues = [];
 
   @override
   Null get enclosing => null;
+
+  @override
+  int line_provider() {
+    return parser.previous!.loc.line;
+  }
 }
 
 class CompilerWrappedImpl with CompilerMixin {
@@ -121,7 +125,7 @@ class CompilerWrappedImpl with CompilerMixin {
   @override
   final FunctionType type;
   @override
-  final Compiler enclosing;
+  final CompilerMixin enclosing;
   @override
   final Parser parser;
   @override
@@ -141,13 +145,13 @@ class CompilerWrappedImpl with CompilerMixin {
           final function = ObjFunction();
           switch (type) {
             case FunctionType.FUNCTION:
-              function.name = parser.previous!.str;
+              function.name = parser.previous!.lexeme;
               break;
             case FunctionType.INITIALIZER:
-              function.name = parser.previous!.str;
+              function.name = parser.previous!.lexeme;
               break;
             case FunctionType.METHOD:
-              function.name = parser.previous!.str;
+              function.name = parser.previous!.lexeme;
               break;
             case FunctionType.SCRIPT:
               break;
@@ -159,9 +163,9 @@ class CompilerWrappedImpl with CompilerMixin {
         debug_trace_bytecode = enclosing.debug_trace_bytecode,
         locals = [
           Local(
-            SyntheticTokenImpl(
+            name: SyntheticTokenImpl(
               type: TokenType.FUN,
-              str: () {
+              lexeme: () {
                 if (type != FunctionType.FUNCTION) {
                   return 'this';
                 } else {
@@ -170,26 +174,59 @@ class CompilerWrappedImpl with CompilerMixin {
               }(),
             ),
             depth: 0,
+            is_captured: false,
           ),
         ],
         upvalues = [];
 
   @override
   ErrorDelegate get error_delegate => enclosing.error_delegate;
+
+  @override
+  int line_provider() {
+    return parser.previous!.loc.line;
+  }
 }
 
 mixin CompilerMixin implements Compiler {
+  ObjFunction get function;
+
+  Parser get parser;
+
+  CompilerMixin? get enclosing;
+
+  bool get debug_trace_bytecode;
+
+  abstract int scope_depth;
+
+  List<Local> get locals;
+
+  @override
+  List<Upvalue> get upvalues;
+
   static bool identifiers_equal2(
     final SyntheticToken a,
     final SyntheticToken b,
   ) {
-    return a.str == b.str;
+    return a.lexeme == b.lexeme;
   }
 
-  Parser get parser;
+  int line_provider();
+
+  ErrorDelegate get error_delegate;
+
+  FunctionType get type;
 
   @override
-  ErrorDelegate get error_delegate;
+  Compiler wrap(
+    final FunctionType type,
+  ) {
+    return CompilerWrappedImpl(
+      type: type,
+      enclosing: this,
+      parser: parser,
+    );
+  }
 
   @override
   ObjFunction end_compiler() {
@@ -197,10 +234,26 @@ mixin CompilerMixin implements Compiler {
     if (error_delegate.errors.isEmpty && debug_trace_bytecode) {
       error_delegate.debug.disassemble_chunk(current_chunk, function.name ?? '<script>');
     }
+    if (enclosing != null) {
+      final _enclosing = enclosing!;
+      _enclosing.emit_byte(OpCode.CLOSURE.index);
+      _enclosing.emit_byte(_enclosing.make_constant(function));
+      for (final x in this.upvalues) {
+        _enclosing.emit_byte(
+          () {
+            if (x.is_local) {
+              return 1;
+            } else {
+              return 0;
+            }
+          }(),
+        );
+        _enclosing.emit_byte(x.index);
+      }
+    }
     return function;
   }
 
-  @override
   Chunk get current_chunk {
     return function.chunk;
   }
@@ -216,19 +269,9 @@ mixin CompilerMixin implements Compiler {
   void emit_byte(
     final int byte,
   ) {
-    current_chunk.write(byte, parser.previous!.loc.line);
+    current_chunk.write(byte, line_provider());
   }
 
-  @override
-  void emit_bytes(
-    final int byte1,
-    final int byte2,
-  ) {
-    emit_byte(byte1);
-    emit_byte(byte2);
-  }
-
-  @override
   void emit_loop(
     final int loopStart,
   ) {
@@ -251,17 +294,16 @@ mixin CompilerMixin implements Compiler {
     return current_chunk.count - 2;
   }
 
-  @override
   void emit_return() {
     if (type == FunctionType.INITIALIZER) {
-      emit_bytes(OpCode.GET_LOCAL.index, 0);
+      emit_byte(OpCode.GET_LOCAL.index);
+      emit_byte(0);
     } else {
       emit_op(OpCode.NIL);
     }
     emit_op(OpCode.RETURN);
   }
 
-  @override
   int make_constant(
     final Object? value,
   ) {
@@ -278,7 +320,8 @@ mixin CompilerMixin implements Compiler {
   void emit_constant(
     final Object? value,
   ) {
-    emit_bytes(OpCode.CONSTANT.index, make_constant(value));
+    emit_byte(OpCode.CONSTANT.index);
+    emit_byte(make_constant(value));
   }
 
   @override
@@ -294,14 +337,14 @@ mixin CompilerMixin implements Compiler {
     current_chunk.code[offset + 1] = jump & 0xff;
   }
 
-  @override
   void add_local(
     final SyntheticToken? name,
   ) {
     if (locals.length >= UINT8_COUNT) {
       error_delegate.error_at_previous('Too many local variables in function');
     } else {
-      locals.add(Local(name));
+      locals.add(Local(name: name,depth: -1,
+        is_captured: false,),);
     }
   }
 
@@ -309,10 +352,9 @@ mixin CompilerMixin implements Compiler {
   int identifier_constant(
     final SyntheticToken name,
   ) {
-    return make_constant(name.str);
+    return make_constant(name.lexeme);
   }
 
-  @override
   int? resolve_local(
     final SyntheticToken? name,
   ) {
@@ -335,23 +377,33 @@ mixin CompilerMixin implements Compiler {
     final int index,
     final bool is_local,
   ) {
-    assert(upvalues.length == function.upvalue_count, "");
-    for (var i = 0; i < upvalues.length; i++) {
+    assert(
+      upvalues.length == function.upvalue_count,
+      "",
+    );
+    for (int i = 0; i < upvalues.length; i++) {
       final upvalue = upvalues[i];
       if (upvalue.index == index && upvalue.is_local == is_local) {
         return i;
+      } else {
+        // continue.
       }
     }
     if (upvalues.length == UINT8_COUNT) {
       error_delegate.error_at_previous('Too many closure variables in function');
       return 0;
     } else {
-      upvalues.add(Upvalue(name, index, is_local));
+      upvalues.add(
+        Upvalue(
+          name: name,
+          index: index,
+          is_local: is_local,
+        ),
+      );
       return function.upvalue_count++;
     }
   }
 
-  @override
   int? resolve_upvalue(
     final SyntheticToken name,
   ) {
@@ -375,14 +427,12 @@ mixin CompilerMixin implements Compiler {
     }
   }
 
-  @override
   void mark_local_variable_initialized() {
     if (scope_depth != 0) {
       locals.last.depth = scope_depth;
     }
   }
 
-  @override
   void define_variable(
     final int global, {
     final NaturalToken? token,
@@ -392,21 +442,22 @@ mixin CompilerMixin implements Compiler {
     if (is_local) {
       mark_local_variable_initialized();
     } else {
-      emit_bytes(OpCode.DEFINE_GLOBAL.index, global);
+      emit_byte(OpCode.DEFINE_GLOBAL.index);
+      emit_byte(global);
     }
   }
 
-  @override
-  void declare_local_variable() {
+  void declare_local_variable(
+    final NaturalToken name,
+  ) {
     // Global variables are implicitly declared.
     if (scope_depth != 0) {
-      final name = parser.previous;
       for (int i = locals.length - 1; i >= 0; i--) {
         final local = locals[i];
         if (local.depth != -1 && local.depth < scope_depth) {
           break; // [negative]
         }
-        if (CompilerMixin.identifiers_equal2(name!, local.name!)) {
+        if (CompilerMixin.identifiers_equal2(name, local.name!)) {
           error_delegate.error_at_previous('Already variable with this name in this scope');
         }
       }
@@ -414,14 +465,14 @@ mixin CompilerMixin implements Compiler {
     }
   }
 
-  @override
   T get_or_set<T>(
     final SyntheticToken name,
     final T Function(
       int,
       OpCode get_op,
       OpCode set_op,
-    ) fn,
+    )
+        fn,
   ) {
     int? arg = resolve_local(name);
     OpCode get_op;
@@ -443,99 +494,556 @@ mixin CompilerMixin implements Compiler {
     }
     return fn(arg, get_op, set_op);
   }
+
+  @override
+  T wrap_in_scope<T>({
+    required final T Function() fn,
+  }) {
+    scope_depth++;
+    final val = fn();
+    scope_depth--;
+    while (locals.isNotEmpty && locals.last.depth > scope_depth) {
+      if (locals.last.is_captured) {
+        emit_op(OpCode.CLOSE_UPVALUE);
+      } else {
+        emit_op(OpCode.POP);
+      }
+      locals.removeLast();
+    }
+    return val;
+  }
+
+  int make_variable(
+    final NaturalToken name,
+  ) {
+    if (scope_depth > 0) {
+      declare_local_variable(name);
+      return 0;
+    } else {
+      return identifier_constant(name);
+    }
+  }
+
+  @override
+  void visit_print() {
+    emit_op(OpCode.PRINT);
+  }
+
+  @override
+  void visit_setter(
+    final SyntheticToken name,
+  ) {
+    get_or_set<void>(
+      name,
+      (final arg, final get_op, final set_op) {
+        emit_byte(set_op.index);
+        emit_byte(arg);
+      },
+    );
+  }
+
+  @override
+  void visit_getter(
+    final SyntheticToken name,
+    final void Function(void Function(OpCode type) p1) setter,
+  ) {
+    get_or_set<void>(
+      name,
+      (final arg, final get_op, final set_op) {
+        emit_byte(get_op.index);
+        emit_byte(arg);
+        setter(
+          (final op) {
+            emit_op(op);
+            emit_byte(set_op.index);
+            emit_byte(arg);
+          },
+        );
+      },
+    );
+  }
+
+  @override
+  void visit_class_name(
+    final NaturalToken class_name,
+    final NaturalToken? previous,
+  ) {
+    final name_constant = identifier_constant(class_name);
+    declare_local_variable(class_name);
+    emit_byte(OpCode.CLASS.index);
+    emit_byte(name_constant);
+    define_variable(name_constant);
+    final class_compiler = ClassCompiler(
+      enclosing: current_class,
+      name: previous,
+      has_superclass: false,
+    );
+    current_class = class_compiler;
+  }
+
+  @override
+  void visit_superclass(
+    final SyntheticToken superclass_name,
+  ) {
+    final class_name = current_class!.name!;
+    visit_getter(superclass_name, (final _) {});
+    if (CompilerMixin.identifiers_equal2(class_name, superclass_name)) {
+      error_delegate.error_at_previous("A class can't inherit from itself");
+    }
+    add_local(
+      const SyntheticTokenImpl(
+        type: TokenType.IDENTIFIER,
+        lexeme: 'super',
+      ),
+    );
+    define_variable(0);
+    visit_getter(class_name, (final _) {});
+    emit_op(OpCode.INHERIT);
+    current_class!.has_superclass = true;
+  }
+
+  @override
+  void visit_fn_args(
+    final List<NaturalToken> args,
+  ) {
+    for (final name in args) {
+      function.arity++;
+      if (function.arity > 255) {
+        error_delegate.error_at_current("Can't have more than 255 parameters");
+      }
+      make_variable(name);
+      mark_local_variable_initialized();
+    }
+    for (int k = 0; k < args.length; k++) {
+      define_variable(0, token: args[k], peek_dist: args.length - 1 - k);
+    }
+  }
+
+  @override
+  R visit_while<E, S, R>(
+    final E Function() expression,
+    final S Function() statement,
+    final R Function(E expr, S stmt) make,
+  ) {
+    final loop_start = current_chunk.count;
+    final expr = expression();
+    final exit_jump = emit_jump(OpCode.JUMP_IF_FALSE);
+    emit_op(OpCode.POP);
+    final stmt = statement();
+    emit_loop(loop_start);
+    patch_jump(exit_jump);
+    emit_op(OpCode.POP);
+    return make(expr, stmt);
+  }
+
+  @override
+  void visit_expr_stmt() {
+    emit_op(OpCode.POP);
+  }
+
+  @override
+  void visit_return_empty() {
+    emit_return();
+  }
+
+  @override
+  Expr visit_return_expr(
+    final Expr Function() expression,
+  ) {
+    if (type == FunctionType.INITIALIZER) {
+      error_delegate.error_at_previous("Can't return a value from an initializer");
+    }
+    final expr = expression();
+    emit_op(OpCode.RETURN);
+    return expr;
+  }
+
+  @override
+  R visit_if<E, S, R>(
+    final E Function() condition,
+    final S Function() body,
+    final S? Function() other,
+    final R Function(E, S, S?) make,
+  ) {
+    final expr = condition();
+    final then_jump = emit_jump(OpCode.JUMP_IF_FALSE);
+    emit_op(OpCode.POP);
+    final stmt = body();
+    final else_jump = emit_jump(OpCode.JUMP);
+    patch_jump(then_jump);
+    emit_op(OpCode.POP);
+    final elsee = other();
+    patch_jump(else_jump);
+    return make(expr, stmt, elsee);
+  }
+
+  @override
+  R visit_iter_for<E, S, R>({
+    required final NaturalToken key_name,
+    required final NaturalToken? value_name,
+    required final Expr Function() iterable,
+    required final Stmt Function() body,
+    required final R Function(Expr iterable, Stmt body) make,
+  }) {
+    return wrap_in_scope(
+      fn: () {
+        make_variable(key_name);
+        emit_op(OpCode.NIL);
+        define_variable(0, token: key_name); // Remove 0
+        final stack_idx = locals.length - 1;
+        if (value_name != null) {
+          make_variable(value_name);
+          emit_op(OpCode.NIL);
+          define_variable(0, token: value_name);
+        } else {
+          add_local(
+            const SyntheticTokenImpl(
+              type: TokenType.IDENTIFIER,
+              lexeme: '_for_val_',
+            ),
+          );
+          emit_constant(0); // Emit a zero to permute val & key
+          mark_local_variable_initialized();
+        }
+        // Now add two dummy local variables. Idx & entries
+        add_local(
+          const SyntheticTokenImpl(
+            type: TokenType.IDENTIFIER,
+            lexeme: '_for_idx_',
+          ),
+        );
+        emit_op(OpCode.NIL);
+        mark_local_variable_initialized();
+        add_local(
+          const SyntheticTokenImpl(
+            type: TokenType.IDENTIFIER,
+            lexeme: '_for_iterable_',
+          ),
+        );
+        emit_op(OpCode.NIL);
+        mark_local_variable_initialized();
+        final _iterable = iterable();
+        final loop_start = current_chunk.count;
+        emit_byte(OpCode.CONTAINER_ITERATE.index);
+        emit_byte(stack_idx);
+        final exit_jump = emit_jump(OpCode.JUMP_IF_FALSE);
+        emit_op(OpCode.POP); // Condition
+        final _body = body();
+        emit_loop(loop_start);
+        patch_jump(exit_jump);
+        emit_op(OpCode.POP); // Condition
+        return make(
+          _iterable,
+          _body,
+        );
+      },
+    );
+  }
+
+  @override
+  List<Expr> visit_var_decl(
+    final Iterable<MapEntry<NaturalToken, Expr Function()>> Function() fn,
+  ) {
+    final exprs = <Expr>[];
+    for(final x in fn()) {
+      final global = make_variable(x.key);
+      final made = x.value();
+      exprs.add(made);
+      define_variable(global, token: x.key);
+    }
+    return exprs;
+  }
+
+  @override
+  StmtLoop visit_classic_for(
+    final LoopLeft? Function() left,
+    final Expr? Function() center,
+    final Expr Function()? Function() expr,
+    final Stmt Function() stmt,
+  ) {
+    return wrap_in_scope(
+      fn: () {
+        final _left = () {
+          final _left = left();
+          if (_left is LoopLeftExpr) {
+            emit_op(OpCode.POP);
+          }
+          return _left;
+        }();
+        int loop_start = current_chunk.count;
+        int exit_jump = -1;
+        final _center = () {
+          final _center = center();
+          if (_center != null) {
+            exit_jump = emit_jump(OpCode.JUMP_IF_FALSE);
+            emit_op(OpCode.POP); // Condition.
+          }
+          return _center;
+        }();
+        final _right = () {
+          final _right = expr();
+          if (_right == null) {
+            return null;
+          } else {
+            final body_jump = emit_jump(OpCode.JUMP);
+            final increment_start = current_chunk.count;
+            final _expr = _right();
+            emit_op(OpCode.POP);
+            emit_loop(loop_start);
+            loop_start = increment_start;
+            patch_jump(body_jump);
+            return _expr;
+          }
+        }();
+        final _stmt = stmt();
+        emit_loop(loop_start);
+        if (exit_jump != -1) {
+          patch_jump(exit_jump);
+          emit_op(OpCode.POP); // Condition.
+        }
+        return StmtLoop(
+          left: _left,
+          center: _center,
+          right: _right,
+          body: _stmt,
+        );
+      },
+    );
+  }
+
+  @override
+  Block visit_fun(
+    final NaturalToken name,
+    final Block Function() block,
+  ) {
+    final global = make_variable(name);
+    mark_local_variable_initialized();
+    final _block = block();
+    define_variable(global, token: name);
+    return _block;
+  }
+
+  @override
+  ExprNil visit_nil() {
+    emit_op(OpCode.NIL);
+    return const ExprNil();
+  }
+
+  @override
+  void visit_set_prop(
+    final NaturalToken name,
+  ) {
+    final _name = identifier_constant(name);
+    emit_byte(OpCode.SET_PROPERTY.index);
+    emit_byte(_name);
+  }
+
+  @override
+  void visit_invoke(
+    final NaturalToken name_token,
+    final int length,
+  ) {
+    final name = identifier_constant(name_token);
+    emit_byte(OpCode.INVOKE.index);
+    emit_byte(name);
+    emit_byte(length);
+  }
+
+  @override
+  void visit_super(
+    final NaturalToken Function() name_token,
+    final int? Function() arg_count,
+  ) {
+    if (current_class == null) {
+      error_delegate.error_at_previous("Can't use 'super' outside of a class");
+    } else if (!current_class!.has_superclass) {
+      error_delegate.error_at_previous("Can't use 'super' in a class with no superclass");
+    }
+    final name = identifier_constant(name_token());
+    visit_getter(
+      const SyntheticTokenImpl(
+        type: TokenType.IDENTIFIER,
+        lexeme: 'this',
+      ),
+      (final _) {},
+    );
+    final _arg_count = arg_count();
+    // endregion
+    if (_arg_count != null) {
+      // region emitter
+      visit_getter(
+        const SyntheticTokenImpl(
+          type: TokenType.IDENTIFIER,
+          lexeme: 'super',
+        ),
+        (final _) {},
+      );
+      emit_byte(OpCode.SUPER_INVOKE.index);
+      emit_byte(name);
+      emit_byte(_arg_count);
+      // endregion
+    } else {
+      visit_getter(
+        const SyntheticTokenImpl(
+          type: TokenType.IDENTIFIER,
+          lexeme: 'super',
+        ),
+        (final _) {},
+      );
+      emit_byte(OpCode.GET_SUPER.index);
+      emit_byte(name);
+    }
+  }
+
+  @override
+  Expr visit_truth() {
+    emit_op(OpCode.TRUE);
+    return ExprTruth();
+  }
+
+  @override
+  Expr visit_falsity() {
+    emit_op(OpCode.FALSE);
+    return ExprFalsity();
+  }
 }
 
+// TODO hide many by removing completely or moving to the mixin.
 abstract class Compiler {
-  abstract int scope_depth;
+  // TODO hide
   abstract ClassCompiler? current_class;
 
-  ObjFunction get function;
+  Iterable<Upvalue> get upvalues;
 
-  List<Local> get locals;
+  // TODO hide
+  T wrap_in_scope<T>({
+    required final T Function() fn,
+  });
 
-  List<Upvalue> get upvalues;
+  Compiler wrap(
+    final FunctionType type,
+  );
 
-  ErrorDelegate get error_delegate;
-
-  FunctionType get type;
-
-  Compiler? get enclosing;
-
-  bool get debug_trace_bytecode;
-
+  // TODO hide?
   ObjFunction end_compiler();
-
-  Chunk get current_chunk;
 
   void emit_op(
     final OpCode op,
   );
 
+  // TODO hide
   void emit_byte(
     final int byte,
   );
 
-  void emit_bytes(
-    final int byte1,
-    final int byte2,
-  );
-
-  void emit_loop(
-    final int loopStart,
-  );
-
+  // TODO hide
   int emit_jump(
     final OpCode instruction,
   );
 
-  void emit_return();
-
-  int make_constant(
-    final Object? value,
-  );
-
+  // TODO hide
   void emit_constant(
     final Object? value,
   );
 
+  // TODO hide
   void patch_jump(
     final int offset,
   );
 
-  void add_local(
-    final SyntheticToken? name,
-  );
-
+  // TODO hide
   int identifier_constant(
     final SyntheticToken name,
   );
 
-  int? resolve_local(
+  void visit_print();
+
+  void visit_setter(
     final SyntheticToken name,
   );
 
-  int? resolve_upvalue(
+  void visit_getter(
     final SyntheticToken name,
+    final void Function(void Function(OpCode type)) setter,
   );
 
-  void mark_local_variable_initialized();
+  void visit_superclass(
+    final SyntheticToken superclass_name,
+  );
 
-  void define_variable(
-    final int global, {
-    final NaturalToken? token,
-    final int peek_dist = 0,
+  void visit_class_name(
+    final NaturalToken class_name,
+    final NaturalToken? previous,
+  );
+
+  void visit_fn_args(
+    final List<NaturalToken> args,
+  );
+
+  R visit_while<E, S, R>(
+    final E Function() expression,
+    final S Function() statement,
+    final R Function(E expr, S stmt) make,
+  );
+
+  void visit_expr_stmt();
+
+  void visit_return_empty();
+
+  Expr visit_return_expr(
+    final Expr Function() expression,
+  );
+
+  R visit_if<E, S, R>(
+    final E Function() condition,
+    final S Function() body,
+    final S? Function() other,
+    final R Function(E, S, S?) make,
+  );
+
+  R visit_iter_for<E, S, R>({
+    required final NaturalToken key_name,
+    required final NaturalToken? value_name,
+    required final Expr Function() iterable,
+    required final Stmt Function() body,
+    required final R Function(Expr iterable, Stmt body) make,
   });
 
-  void declare_local_variable();
-
-  T get_or_set<T>(
-    final SyntheticToken name,
-    final T Function(
-      int,
-      OpCode get_op,
-      OpCode set_op,
-    ) fn,
+  List<Expr> visit_var_decl(
+    final Iterable<MapEntry<NaturalToken, Expr Function()>> Function() fn,
   );
+
+  StmtLoop visit_classic_for(
+    final LoopLeft? Function() left,
+    final Expr? Function() center,
+    final Expr Function()? Function() expr,
+    final Stmt Function() stmt,
+  );
+
+  Block visit_fun(
+    final NaturalToken name,
+    final Block Function() param1,
+  );
+
+  ExprNil visit_nil();
+
+  void visit_set_prop(
+    final NaturalToken name,
+  );
+
+  void visit_invoke(
+    final NaturalToken name_token,
+    final int length,
+  );
+
+  void visit_super(
+    final NaturalToken Function() name_token,
+    final int? Function() arg_count,
+  );
+
+  Expr visit_truth();
+
+  Expr visit_falsity();
 }
 
 const UINT8_COUNT = 256;
@@ -547,10 +1055,10 @@ class Local {
   int depth;
   bool is_captured;
 
-  Local(
-    final this.name, {
-    final this.depth = -1,
-    final this.is_captured = false,
+  Local({
+    required final this.name,
+    required final this.depth,
+    required final this.is_captured,
   });
 
   bool get initialized {
@@ -563,11 +1071,11 @@ class Upvalue {
   final int index;
   final bool is_local;
 
-  const Upvalue(
-    final this.name,
-    final this.index,
-    final this.is_local,
-  );
+  const Upvalue({
+    required final this.name,
+    required final this.index,
+    required final this.is_local,
+  });
 }
 
 enum FunctionType {
@@ -582,11 +1090,11 @@ class ClassCompiler {
   final NaturalToken? name;
   bool has_superclass;
 
-  ClassCompiler(
-    final this.enclosing,
-    final this.name,
-    final this.has_superclass,
-  );
+  ClassCompiler({
+    required final this.enclosing,
+    required final this.name,
+    required final this.has_superclass,
+  });
 }
 // endregion
 
@@ -596,798 +1104,579 @@ class ClassCompiler {
 class ParserAtCompiler {
   final Parser parser;
   final ErrorDelegate error_delegate;
-  final Compiler compiler;
 
   const ParserAtCompiler({
     required final this.parser,
     required final this.error_delegate,
-    required final this.compiler,
   });
 
-  Declaration declaration() {
+  Declaration declaration(
+    final Compiler compiler,
+  ) {
     Expr expression() {
-      Expr expression() {
-        void get_or_set_can_assign(
-          final SyntheticToken name,
-        ) {
-          compiler.get_or_set<void>(
-            name,
-                (final arg, final get_op, final set_op) {
-              if (parser.match(TokenType.EQUAL)) {
-                // ignore: unused_local_variable
+      Expr? parse_precedence(
+        final Precedence precedence,
+      ) {
+        final can_assign = precedence.index <= Precedence.ASSIGNMENT.index;
+        parser.advance();
+        final Expr? Function()? prefix_rule = () {
+          switch (parser.previous!.type) {
+            case TokenType.LEFT_PAREN:
+              return () {
+                // TODO visit and expr
                 final expr = expression();
+                parser.consume(TokenType.RIGHT_PAREN, "Expect ')' after expression");
+                return expr;
+              };
+            case TokenType.LEFT_BRACE:
+              return () {
+                // TODO visit
+                final entries = <ExprmapMapEntry>[];
+                if (!parser.check(TokenType.RIGHT_BRACE)) {
+                  do {
+                    final key = expression();
+                    parser.consume(TokenType.COLON, "Expect ':' between map key-value pairs");
+                    final value = expression();
+                    entries.add(
+                      ExprmapMapEntry(
+                        key: key,
+                        value: value,
+                      ),
+                    );
+                  } while (parser.match(TokenType.COMMA));
+                }
+                parser.consume(TokenType.RIGHT_BRACE, "Expect '}' after map initializer");
                 // region emitter
-                compiler.emit_bytes(set_op.index, arg);
+                compiler.emit_byte(OpCode.MAP_INIT.index);
+                compiler.emit_byte(entries.length);
                 // endregion
-              } else {
+                return ExprMap(
+                  entries: entries,
+                );
+              };
+            case TokenType.LEFT_BRACK:
+              return () {
+                // TODO visit
+                int val_count = 0;
+                final values = <Expr>[];
+                if (!parser.check(TokenType.RIGHT_BRACK)) {
+                  values.add(expression());
+                  val_count += 1;
+                  if (parser.match(TokenType.COLON)) {
+                    values.add(expression());
+                    val_count = -1;
+                  } else {
+                    while (parser.match(TokenType.COMMA)) {
+                      values.add(expression());
+                      val_count++;
+                    }
+                  }
+                }
+                parser.consume(TokenType.RIGHT_BRACK, "Expect ']' after list initializer");
                 // region emitter
-                compiler.emit_bytes(get_op.index, arg);
+                if (val_count >= 0) {
+                  compiler.emit_byte(OpCode.LIST_INIT.index);
+                  compiler.emit_byte(val_count);
+                } else {
+                  compiler.emit_byte(OpCode.LIST_INIT_RANGE.index);
+                }
                 // endregion
-                if (parser.match_pair(TokenType.PLUS, TokenType.EQUAL)) {
-                  // ignore: unused_local_variable
-                  final expr = expression();
+                return ExprList(
+                  values: values,
+                  val_count: val_count,
+                );
+              };
+            case TokenType.MINUS:
+              return () {
+                // TODO visit and expr
+                final expr = parse_precedence(Precedence.UNARY);
+                // region emitter
+                compiler.emit_op(OpCode.NEGATE);
+                // endregion
+                return expr;
+              };
+            case TokenType.BANG:
+              return () {
+                // TODO visit and expr
+                final expr = parse_precedence(Precedence.UNARY);
+                // region emitter
+                compiler.emit_op(OpCode.NOT);
+                // endregion
+                return expr;
+              };
+            case TokenType.IDENTIFIER:
+              return () {
+                // TODO visit and expr
+                if (can_assign) {
+                  final name = parser.previous!;
+                  if (parser.match(TokenType.EQUAL)) {
+                    // ignore: unused_local_variable
+                    final expr = expression();
+                    compiler.visit_setter(name);
+                  } else {
+                    compiler.visit_getter(
+                      name,
+                      (final setter) {
+                        if (parser.match_pair(TokenType.PLUS, TokenType.EQUAL)) {
+                          // ignore: unused_local_variable
+                          final expr = expression();
+                          setter(OpCode.ADD);
+                        } else if (parser.match_pair(TokenType.MINUS, TokenType.EQUAL)) {
+                          // ignore: unused_local_variable
+                          final expr = expression();
+                          setter(OpCode.SUBTRACT);
+                        } else if (parser.match_pair(TokenType.STAR, TokenType.EQUAL)) {
+                          // ignore: unused_local_variable
+                          final expr = expression();
+                          setter(OpCode.MULTIPLY);
+                        } else if (parser.match_pair(TokenType.SLASH, TokenType.EQUAL)) {
+                          // ignore: unused_local_variable
+                          final expr = expression();
+                          setter(OpCode.DIVIDE);
+                        } else if (parser.match_pair(TokenType.PERCENT, TokenType.EQUAL)) {
+                          // ignore: unused_local_variable
+                          final expr = expression();
+                          setter(OpCode.MOD);
+                        } else if (parser.match_pair(TokenType.CARET, TokenType.EQUAL)) {
+                          // ignore: unused_local_variable
+                          final expr = expression();
+                          setter(OpCode.POW);
+                        } else {
+                          // Ignore.
+                        }
+                      },
+                    );
+                  }
+                } else {
+                  compiler.visit_getter(parser.previous!, (final _) {});
+                }
+              };
+            case TokenType.STRING:
+              return () {
+                // TODO visit and expr
+                // region emitter
+                compiler.emit_constant(parser.previous!.lexeme);
+                // endregion
+              };
+            case TokenType.NUMBER:
+              return () {
+                // TODO visit and expr
+                final value = double.tryParse(parser.previous!.lexeme!);
+                if (value == null) {
+                  error_delegate.error_at_previous('Invalid number');
+                } else {
                   // region emitter
-                  compiler.emit_op(OpCode.ADD);
-                  compiler.emit_bytes(set_op.index, arg);
+                  compiler.emit_constant(value);
                   // endregion
-                } else if (parser.match_pair(TokenType.MINUS, TokenType.EQUAL)) {
-                  // ignore: unused_local_variable
-                  final expr = expression();
+                }
+              };
+            case TokenType.OBJECT:
+              return () {
+                // TODO visit and expr
+                // region emitter
+                compiler.emit_constant(null);
+                // endregion
+              };
+            case TokenType.SUPER:
+              return () {
+                // TODO expr
+                compiler.visit_super(
+                  () {
+                    parser.consume(TokenType.DOT, "Expect '.' after 'super'");
+                    parser.consume(TokenType.IDENTIFIER, 'Expect superclass method name');
+                    return parser.previous!;
+                  },
+                  () {
+                    if (parser.match(TokenType.LEFT_PAREN)) {
+                      return parser.parse_argument_list(expression).args.length;
+                    } else {
+                      return null;
+                    }
+                  },
+                );
+              };
+            case TokenType.THIS:
+              return () {
+                // TODO visit and expr
+                if (compiler.current_class == null) {
+                  error_delegate.error_at_previous("Can't use 'this' outside of a class");
+                } else {
+                  compiler.visit_getter(parser.previous!, (final _) {});
+                }
+              };
+            case TokenType.FALSE:
+              return () => compiler.visit_falsity();
+            case TokenType.NIL:
+              return () => compiler.visit_nil();
+            case TokenType.TRUE:
+              return () => compiler.visit_truth();
+            // ignore: no_default_cases
+            default:
+              return null;
+          }
+        }();
+        if (prefix_rule == null) {
+          error_delegate.error_at_previous('Expect expression');
+          return null;
+        } else {
+          // ignore: unused_local_variable
+          final prefix_expr = prefix_rule();
+          while (precedence.index <= get_precedence(parser.current!.type).index) {
+            parser.advance();
+            // ignore: unused_local_variable
+            final infix_expr = () {
+              switch (parser.previous!.type) {
+                case TokenType.LEFT_PAREN:
+                  final args = parser.parse_argument_list(expression);
+                  // region emitter
+                  compiler.emit_byte(OpCode.CALL.index);
+                  compiler.emit_byte(args.args.length);
+                  // endregion
+                  return ExprCall(
+                    args: args,
+                  );
+                case TokenType.LEFT_BRACK:
+                  bool get_range = parser.match(TokenType.COLON);
+                  // Left hand side operand
+                  if (get_range) {
+                    // region emitter
+                    compiler.emit_constant(Nil);
+                    // endregion
+                  } else {
+                    expression();
+                    get_range = parser.match(TokenType.COLON);
+                  }
+                  // Right hand side operand
+                  if (parser.match(TokenType.RIGHT_BRACK)) {
+                    // region emitter
+                    if (get_range) {
+                      compiler.emit_constant(Nil);
+                    }
+                    // endregion
+                  } else {
+                    if (get_range) {
+                      expression();
+                    }
+                    parser.consume(TokenType.RIGHT_BRACK, "Expect ']' after list indexing");
+                  }
+                  // Emit operation
+                  if (get_range) {
+                    // region emitter
+                    compiler.emit_op(OpCode.CONTAINER_GET_RANGE);
+                    // endregion
+                  } else if (can_assign && parser.match(TokenType.EQUAL)) {
+                    expression();
+                    // region emitter
+                    compiler.emit_op(OpCode.CONTAINER_SET);
+                    // endregion
+                  } else {
+                    // region emitter
+                    compiler.emit_op(OpCode.CONTAINER_GET);
+                    // endregion
+                  }
+                  break;
+                case TokenType.DOT:
+                  parser.consume(TokenType.IDENTIFIER, "Expect property name after '.'");
+                  final name_token = parser.previous!;
+                  if (can_assign && parser.match(TokenType.EQUAL)) {
+                    final expr = expression();
+                    compiler.visit_set_prop(name_token);
+                    return ExprSet(arg: expr, name: name_token);
+                  } else if (parser.match(TokenType.LEFT_PAREN)) {
+                    final args = parser.parse_argument_list(expression);
+                    compiler.visit_invoke(name_token, args.args.length);
+                    return ExprInvoke(args: args, name: name_token);
+                  } else {
+                    // region emitter
+                    final name = compiler.identifier_constant(name_token);
+                    compiler.emit_byte(OpCode.GET_PROPERTY.index);
+                    compiler.emit_byte(name);
+                    // endregion
+                    return ExprGet(name: name_token);
+                  }
+                case TokenType.MINUS:
+                  parse_precedence(get_next_precedence(TokenType.MINUS));
                   // region emitter
                   compiler.emit_op(OpCode.SUBTRACT);
-                  compiler.emit_bytes(set_op.index, arg);
                   // endregion
-                } else if (parser.match_pair(TokenType.STAR, TokenType.EQUAL)) {
-                  // ignore: unused_local_variable
-                  final expr = expression();
+                  break;
+                case TokenType.PLUS:
+                  parse_precedence(get_next_precedence(TokenType.PLUS));
                   // region emitter
-                  compiler.emit_op(OpCode.MULTIPLY);
-                  compiler.emit_bytes(set_op.index, arg);
+                  compiler.emit_op(OpCode.ADD);
                   // endregion
-                } else if (parser.match_pair(TokenType.SLASH, TokenType.EQUAL)) {
-                  // ignore: unused_local_variable
-                  final expr = expression();
+                  break;
+                case TokenType.SLASH:
+                  parse_precedence(get_next_precedence(TokenType.SLASH));
                   // region emitter
                   compiler.emit_op(OpCode.DIVIDE);
-                  compiler.emit_bytes(set_op.index, arg);
                   // endregion
-                } else if (parser.match_pair(TokenType.PERCENT, TokenType.EQUAL)) {
-                  // ignore: unused_local_variable
-                  final expr = expression();
+                  break;
+                case TokenType.STAR:
+                  parse_precedence(get_next_precedence(TokenType.STAR));
                   // region emitter
-                  compiler.emit_op(OpCode.MOD);
-                  compiler.emit_bytes(set_op.index, arg);
+                  compiler.emit_op(OpCode.MULTIPLY);
                   // endregion
-                } else if (parser.match_pair(TokenType.CARET, TokenType.EQUAL)) {
-                  // ignore: unused_local_variable
-                  final expr = expression();
+                  break;
+                case TokenType.CARET:
+                  parse_precedence(get_next_precedence(TokenType.CARET));
                   // region emitter
                   compiler.emit_op(OpCode.POW);
-                  compiler.emit_bytes(set_op.index, arg);
                   // endregion
+                  break;
+                case TokenType.PERCENT:
+                  parse_precedence(get_next_precedence(TokenType.PERCENT));
+                  // region emitter
+                  compiler.emit_op(OpCode.MOD);
+                  // endregion
+                  break;
+                case TokenType.BANG_EQUAL:
+                  parse_precedence(get_next_precedence(TokenType.BANG_EQUAL));
+                  // region emitter
+                  compiler.emit_byte(OpCode.EQUAL.index);
+                  compiler.emit_byte(OpCode.NOT.index);
+                  // endregion
+                  break;
+                case TokenType.EQUAL_EQUAL:
+                  parse_precedence(get_next_precedence(TokenType.EQUAL_EQUAL));
+                  // region emitter
+                  compiler.emit_op(OpCode.EQUAL);
+                  // endregion
+                  break;
+                case TokenType.GREATER:
+                  parse_precedence(get_next_precedence(TokenType.GREATER));
+                  // region emitter
+                  compiler.emit_op(OpCode.GREATER);
+                  // endregion
+                  break;
+                case TokenType.GREATER_EQUAL:
+                  parse_precedence(get_next_precedence(TokenType.GREATER_EQUAL));
+                  // region emitter
+                  compiler.emit_byte(OpCode.LESS.index);
+                  compiler.emit_byte(OpCode.NOT.index);
+                  // endregion
+                  break;
+                case TokenType.LESS:
+                  parse_precedence(get_next_precedence(TokenType.LESS));
+                  // region emitter
+                  compiler.emit_op(OpCode.LESS);
+                  // endregion
+                  break;
+                case TokenType.LESS_EQUAL:
+                  parse_precedence(get_next_precedence(TokenType.LESS_EQUAL));
+                  // region emitter
+                  compiler.emit_byte(OpCode.GREATER.index);
+                  compiler.emit_byte(OpCode.NOT.index);
+                  // endregion
+                  break;
+                case TokenType.AND:
+                  // region emitter
+                  final end_jump = compiler.emit_jump(OpCode.JUMP_IF_FALSE);
+                  compiler.emit_op(OpCode.POP);
+                  // endregion
+                  parse_precedence(get_precedence(TokenType.AND));
+                  // region emitter
+                  compiler.patch_jump(end_jump);
+                  // endregion
+                  break;
+                case TokenType.OR:
+                  // region emitter
+                  final else_jump = compiler.emit_jump(OpCode.JUMP_IF_FALSE);
+                  final end_jump = compiler.emit_jump(OpCode.JUMP);
+                  compiler.patch_jump(else_jump);
+                  compiler.emit_op(OpCode.POP);
+                  // endregion
+                  parse_precedence(get_precedence(TokenType.OR));
+                  // region emitter
+                  compiler.patch_jump(end_jump);
+                  // endregion
+                  break;
+                // ignore: no_default_cases
+                default:
+                  throw Exception("Invalid State");
+              }
+            }();
+          }
+          if (can_assign) {
+            if (parser.match(TokenType.EQUAL)) {
+              error_delegate.error_at_previous('Invalid assignment target');
+            }
+          }
+        }
+      }
+
+      return parse_precedence(Precedence.ASSIGNMENT) ?? Expr();
+    }
+
+    DeclarationVari var_declaration() {
+      return DeclarationVari(
+        exprs: () {
+          final exprs = compiler.visit_var_decl(
+            () sync* {
+              for(;;) {
+                parser.consume(TokenType.IDENTIFIER, 'Expect variable name');
+                yield MapEntry(
+                  parser.previous!,
+                  () {
+                    if (parser.match(TokenType.EQUAL)) {
+                      return expression();
+                    } else {
+                      return compiler.visit_nil();
+                    }
+                  },
+                );
+                if (parser.match(TokenType.COMMA)) {
+                  continue;
                 } else {
-                  // Ignore.
+                  break;
                 }
               }
             },
           );
-        }
-
-        List<Expr> argument_list() {
-          final args = <Expr>[];
-          if (!parser.check(TokenType.RIGHT_PAREN)) {
-            do {
-              args.add(expression());
-              if (args.length == 256) {
-                error_delegate.error_at_previous("Can't have more than 255 arguments");
-              }
-            } while (parser.match(TokenType.COMMA));
-          }
-          parser.consume(TokenType.RIGHT_PAREN, "Expect ')' after arguments");
-          return args;
-        }
-
-        Expr? parse_precedence(
-          final Precedence precedence,
-        ) {
-          parser.advance();
-          final can_assign = precedence.index <= Precedence.ASSIGNMENT.index;
-          final Expr? Function()? prefix_rule = () {
-            switch (parser.previous!.type) {
-              case TokenType.LEFT_PAREN:
-                return () {
-                  final expr = expression();
-                  parser.consume(TokenType.RIGHT_PAREN, "Expect ')' after expression");
-                  return expr;
-                };
-              case TokenType.LEFT_BRACE:
-                return () {
-                  int val_count = 0;
-                  final entries = <ExprmapMapEntry>[];
-                  if (!parser.check(TokenType.RIGHT_BRACE)) {
-                    do {
-                      final key = expression();
-                      parser.consume(TokenType.COLON, "Expect ':' between map key-value pairs");
-                      final value = expression();
-                      entries.add(
-                        ExprmapMapEntry(
-                          key: key,
-                          value: value,
-                        ),
-                      );
-                      val_count++;
-                    } while (parser.match(TokenType.COMMA));
-                  }
-                  parser.consume(TokenType.RIGHT_BRACE, "Expect '}' after map initializer");
-                  // region emitter
-                  compiler.emit_bytes(OpCode.MAP_INIT.index, val_count);
-                  // endregion
-                  return ExprMap(
-                    entries: entries,
-                  );
-                };
-              case TokenType.LEFT_BRACK:
-                return () {
-                  int val_count = 0;
-                  final values = <Expr>[];
-                  if (!parser.check(TokenType.RIGHT_BRACK)) {
-                    values.add(expression());
-                    val_count += 1;
-                    if (parser.match(TokenType.COLON)) {
-                      values.add(expression());
-                      val_count = -1;
-                    } else {
-                      while (parser.match(TokenType.COMMA)) {
-                        values.add(expression());
-                        val_count++;
-                      }
-                    }
-                  }
-                  parser.consume(TokenType.RIGHT_BRACK, "Expect ']' after list initializer");
-                  // region emitter
-                  if (val_count >= 0) {
-                    compiler.emit_bytes(OpCode.LIST_INIT.index, val_count);
-                  } else {
-                    compiler.emit_byte(OpCode.LIST_INIT_RANGE.index);
-                  }
-                  // endregion
-                  return ExprList(
-                    values: values,
-                  );
-                };
-              case TokenType.MINUS:
-                return () {
-                  final expr = parse_precedence(Precedence.UNARY);
-                  // region emitter
-                  compiler.emit_op(OpCode.NEGATE);
-                  // endregion
-                  return expr;
-                };
-              case TokenType.BANG:
-                return () {
-                  final expr = parse_precedence(Precedence.UNARY);
-                  // region emitter
-                  compiler.emit_op(OpCode.NOT);
-                  // endregion
-                  return expr;
-                };
-              case TokenType.IDENTIFIER:
-                return () {
-                  if (can_assign) {
-                    get_or_set_can_assign(parser.previous!);
-                  } else {
-                    // region emitter
-                    compiler.get_or_set<void>(
-                      parser.previous!,
-                          (final arg, final get_op, final set_op) {
-                        compiler.emit_bytes(get_op.index, arg);
-                      },
-                    );
-                    // endregion
-                  }
-                };
-              case TokenType.STRING:
-                return () {
-                  // region emitter
-                  compiler.emit_constant(parser.previous!.str);
-                  // endregion
-                };
-              case TokenType.NUMBER:
-                return () {
-                  final value = double.tryParse(parser.previous!.str!);
-                  if (value == null) {
-                    error_delegate.error_at_previous('Invalid number');
-                  } else {
-                    // region emitter
-                    compiler.emit_constant(value);
-                    // endregion
-                  }
-                };
-              case TokenType.OBJECT:
-                return () {
-                  // region emitter
-                  compiler.emit_constant(null);
-                  // endregion
-                };
-              case TokenType.FALSE:
-                return () {
-                  // region emitter
-                  compiler.emit_op(OpCode.FALSE);
-                  // endregion
-                };
-              case TokenType.NIL:
-                return () {
-                  // region emitter
-                  compiler.emit_op(OpCode.NIL);
-                  // endregion
-                };
-              case TokenType.SUPER:
-                return () {
-                  if (compiler.current_class == null) {
-                    error_delegate.error_at_previous("Can't use 'super' outside of a class");
-                  } else if (!compiler.current_class!.has_superclass) {
-                    error_delegate.error_at_previous("Can't use 'super' in a class with no superclass");
-                  }
-                  parser.consume(TokenType.DOT, "Expect '.' after 'super'");
-                  parser.consume(TokenType.IDENTIFIER, 'Expect superclass method name');
-                  // region emitter
-                  final name = compiler.identifier_constant(parser.previous!);
-                  compiler.get_or_set<void>(
-                    const SyntheticTokenImpl(
-                      type: TokenType.IDENTIFIER,
-                      str: 'this',
-                    ),
-                        (final arg, final get_op, final set_op) {
-                      compiler.emit_bytes(get_op.index, arg);
-                    },
-                  );
-                  // endregion
-                  if (parser.match(TokenType.LEFT_PAREN)) {
-                    final arg_count = argument_list();
-                    // region emitter
-                    compiler.get_or_set<void>(
-                      const SyntheticTokenImpl(
-                        type: TokenType.IDENTIFIER,
-                        str: 'super',
-                      ),
-                          (final arg, final get_op, final set_op) {
-                        compiler.emit_bytes(get_op.index, arg);
-                      },
-                    );
-                    compiler.emit_bytes(OpCode.SUPER_INVOKE.index, name);
-                    compiler.emit_byte(arg_count.length);
-                    // endregion
-                  } else {
-                    // region emitter
-                    compiler.get_or_set<void>(
-                      const SyntheticTokenImpl(
-                        type: TokenType.IDENTIFIER,
-                        str: 'super',
-                      ),
-                          (final arg, final get_op, final set_op) {
-                        compiler.emit_bytes(get_op.index, arg);
-                      },
-                    );
-                    compiler.emit_bytes(OpCode.GET_SUPER.index, name);
-                    // endregion
-                  }
-                };
-              case TokenType.THIS:
-                return () {
-                  if (compiler.current_class == null) {
-                    error_delegate.error_at_previous("Can't use 'this' outside of a class");
-                  } else {
-                    // region emitter
-                    compiler.get_or_set<void>(
-                      parser.previous!,
-                          (final arg, final get_op, final set_op) {
-                        compiler.emit_bytes(get_op.index, arg);
-                      },
-                    );
-                    // endregion
-                  }
-                };
-              case TokenType.TRUE:
-                return () {
-                  // region emitter
-                  compiler.emit_op(OpCode.TRUE);
-                  // endregion
-                };
-            // ignore: no_default_cases
-              default:
-                return null;
-            }
-          }();
-          if (prefix_rule == null) {
-            error_delegate.error_at_previous('Expect expression');
-            return null;
-          } else {
-            // ignore: unused_local_variable
-            final prefix_expr = prefix_rule();
-            while (precedence.index <= get_precedence(parser.current!.type).index) {
-              parser.advance();
-              // ignore: unused_local_variable
-              final infix_expr = () {
-                switch (parser.previous!.type) {
-                  case TokenType.LEFT_PAREN:
-                    final args = argument_list();
-                    // region emitter
-                    compiler.emit_bytes(OpCode.CALL.index, args.length);
-                    // endregion
-                    return ExprCall(
-                      args: args,
-                    );
-                  case TokenType.LEFT_BRACK:
-                    bool get_range = parser.match(TokenType.COLON);
-                    // Left hand side operand
-                    if (get_range) {
-                      // region emitter
-                      compiler.emit_constant(Nil);
-                      // endregion
-                    } else {
-                      expression();
-                      get_range = parser.match(TokenType.COLON);
-                    }
-                    // Right hand side operand
-                    if (parser.match(TokenType.RIGHT_BRACK)) {
-                      // region emitter
-                      if (get_range) {
-                        compiler.emit_constant(Nil);
-                      }
-                      // endregion
-                    } else {
-                      if (get_range) {
-                        expression();
-                      }
-                      parser.consume(TokenType.RIGHT_BRACK, "Expect ']' after list indexing");
-                    }
-                    // Emit operation
-                    if (get_range) {
-                      // region emitter
-                      compiler.emit_op(OpCode.CONTAINER_GET_RANGE);
-                      // endregion
-                    } else if (can_assign && parser.match(TokenType.EQUAL)) {
-                      expression();
-                      // region emitter
-                      compiler.emit_op(OpCode.CONTAINER_SET);
-                      // endregion
-                    } else {
-                      // region emitter
-                      compiler.emit_op(OpCode.CONTAINER_GET);
-                      // endregion
-                    }
-                    break;
-                  case TokenType.DOT:
-                    parser.consume(TokenType.IDENTIFIER, "Expect property name after '.'");
-                    final name_token = parser.previous!;
-                    if (can_assign && parser.match(TokenType.EQUAL)) {
-                      final expr = expression();
-                      // region emitter
-                      final name = compiler.identifier_constant(name_token);
-                      compiler.emit_bytes(OpCode.SET_PROPERTY.index, name);
-                      // endregion
-                      return ExprSet(arg: expr, name: name_token);
-                    } else if (parser.match(TokenType.LEFT_PAREN)) {
-                      final args = argument_list();
-                      // region emitter
-                      final name = compiler.identifier_constant(name_token);
-                      compiler.emit_bytes(OpCode.INVOKE.index, name);
-                      compiler.emit_byte(args.length);
-                      // endregion
-                      return ExprInvoke(args: args, name: name_token);
-                    } else {
-                      // region emitter
-                      final name = compiler.identifier_constant(name_token);
-                      compiler.emit_bytes(OpCode.GET_PROPERTY.index, name);
-                      // endregion
-                      return ExprGet(name: name_token);
-                    }
-                  case TokenType.MINUS:
-                    parse_precedence(get_next_precedence(TokenType.MINUS));
-                    // region emitter
-                    compiler.emit_op(OpCode.SUBTRACT);
-                    // endregion
-                    break;
-                  case TokenType.PLUS:
-                    parse_precedence(get_next_precedence(TokenType.PLUS));
-                    // region emitter
-                    compiler.emit_op(OpCode.ADD);
-                    // endregion
-                    break;
-                  case TokenType.SLASH:
-                    parse_precedence(get_next_precedence(TokenType.SLASH));
-                    // region emitter
-                    compiler.emit_op(OpCode.DIVIDE);
-                    // endregion
-                    break;
-                  case TokenType.STAR:
-                    parse_precedence(get_next_precedence(TokenType.STAR));
-                    // region emitter
-                    compiler.emit_op(OpCode.MULTIPLY);
-                    // endregion
-                    break;
-                  case TokenType.CARET:
-                    parse_precedence(get_next_precedence(TokenType.CARET));
-                    // region emitter
-                    compiler.emit_op(OpCode.POW);
-                    // endregion
-                    break;
-                  case TokenType.PERCENT:
-                    parse_precedence(get_next_precedence(TokenType.PERCENT));
-                    // region emitter
-                    compiler.emit_op(OpCode.MOD);
-                    // endregion
-                    break;
-                  case TokenType.BANG_EQUAL:
-                    parse_precedence(get_next_precedence(TokenType.BANG_EQUAL));
-                    // region emitter
-                    compiler.emit_bytes(OpCode.EQUAL.index, OpCode.NOT.index);
-                    // endregion
-                    break;
-                  case TokenType.EQUAL_EQUAL:
-                    parse_precedence(get_next_precedence(TokenType.EQUAL_EQUAL));
-                    // region emitter
-                    compiler.emit_op(OpCode.EQUAL);
-                    // endregion
-                    break;
-                  case TokenType.GREATER:
-                    parse_precedence(get_next_precedence(TokenType.GREATER));
-                    // region emitter
-                    compiler.emit_op(OpCode.GREATER);
-                    // endregion
-                    break;
-                  case TokenType.GREATER_EQUAL:
-                    parse_precedence(get_next_precedence(TokenType.GREATER_EQUAL));
-                    // region emitter
-                    compiler.emit_bytes(OpCode.LESS.index, OpCode.NOT.index);
-                    // endregion
-                    break;
-                  case TokenType.LESS:
-                    parse_precedence(get_next_precedence(TokenType.LESS));
-                    // region emitter
-                    compiler.emit_op(OpCode.LESS);
-                    // endregion
-                    break;
-                  case TokenType.LESS_EQUAL:
-                    parse_precedence(get_next_precedence(TokenType.LESS_EQUAL));
-                    // region emitter
-                    compiler.emit_bytes(OpCode.GREATER.index, OpCode.NOT.index);
-                    // endregion
-                    break;
-                  case TokenType.AND:
-                  // region emitter
-                    final end_jump = compiler.emit_jump(OpCode.JUMP_IF_FALSE);
-                    compiler.emit_op(OpCode.POP);
-                    // endregion
-                    parse_precedence(get_precedence(TokenType.AND));
-                    // region emitter
-                    compiler.patch_jump(end_jump);
-                    // endregion
-                    break;
-                  case TokenType.OR:
-                  // region emitter
-                    final else_jump = compiler.emit_jump(OpCode.JUMP_IF_FALSE);
-                    final end_jump = compiler.emit_jump(OpCode.JUMP);
-                    compiler.patch_jump(else_jump);
-                    compiler.emit_op(OpCode.POP);
-                    // endregion
-                    parse_precedence(get_precedence(TokenType.OR));
-                    // region emitter
-                    compiler.patch_jump(end_jump);
-                    // endregion
-                    break;
-                // ignore: no_default_cases
-                  default:
-                    throw Exception("Invalid State");
-                }
-              }();
-            }
-            if (can_assign) {
-              if (parser.match(TokenType.EQUAL)) {
-                error_delegate.error_at_previous('Invalid assignment target');
-              }
-            }
-          }
-        }
-
-        return parse_precedence(Precedence.ASSIGNMENT) ?? Expr();
-      }
-
-      return expression();
-    }
-
-    T wrap_in_scope<T>({
-      required final T Function() fn,
-    }) {
-      compiler.scope_depth++;
-      final val = fn();
-      compiler.scope_depth--;
-      while (compiler.locals.isNotEmpty && compiler.locals.last.depth > compiler.scope_depth) {
-        if (compiler.locals.last.is_captured) {
-          compiler.emit_op(OpCode.CLOSE_UPVALUE);
-        } else {
-          compiler.emit_op(OpCode.POP);
-        }
-        compiler.locals.removeLast();
-      }
-      return val;
-    }
-
-    int parse_variable(
-      final String error_message,
-      final Compiler compiler,
-    ) {
-      parser.consume(TokenType.IDENTIFIER, error_message);
-      if (compiler.scope_depth > 0) {
-        compiler.declare_local_variable();
-        return 0;
-      } else {
-        return compiler.identifier_constant(parser.previous!);
-      }
-    }
-
-    DeclarationVari var_declaration() {
-      final exprs = <Expr>[];
-      do {
-        final global = parse_variable('Expect variable name', compiler);
-        final token = parser.previous;
-        if (parser.match(TokenType.EQUAL)) {
-          exprs.add(expression());
-        } else {
-          exprs.add(const ExprNil());
-          // region emitter
-          compiler.emit_op(OpCode.NIL);
-          // endregion
-        }
-        // region emitter
-        compiler.define_variable(global, token: token);
-        // endregion
-      } while (parser.match(TokenType.COMMA));
-      parser.consume(TokenType.SEMICOLON, 'Expect a newline after variable declaration');
-      return DeclarationVari(
-        exprs: exprs,
+          parser.consume(TokenType.SEMICOLON, 'Expect a newline after variable declaration');
+          return exprs;
+        }(),
       );
     }
 
     Stmt statement() {
       if (parser.match(TokenType.PRINT)) {
         final expr = expression();
-        // region emitter
         parser.consume(TokenType.SEMICOLON, 'Expect a newline after value');
-        compiler.emit_op(OpCode.PRINT);
-        // endregion
+        compiler.visit_print();
         return StmtOutput(
           expr: expr,
         );
       } else if (parser.match(TokenType.FOR)) {
         if (parser.match(TokenType.LEFT_PAREN)) {
-          return wrap_in_scope(
-            fn: () {
-              final left = () {
-                if (parser.match(TokenType.SEMICOLON)) {
-                  return null;
-                } else if (parser.match(TokenType.VAR)) {
-                  return LoopLeftVari(
-                    decl: var_declaration(),
-                  );
-                } else {
-                  final expr = expression();
-                  // region emitter
-                  parser.consume(TokenType.SEMICOLON, 'Expect a newline after expression');
-                  compiler.emit_op(OpCode.POP);
-                  // endregion
-                  return LoopLeftExpr(
-                    expr: expr,
-                  );
-                }
-              }();
-              // region emitter
-              int loop_start = compiler.current_chunk.count;
-              int exit_jump = -1;
-              // endregion
-              final center = () {
-                if (!parser.match(TokenType.SEMICOLON)) {
-                  final expr = expression();
-                  // region emitter
-                  parser.consume(TokenType.SEMICOLON, "Expect ';' after loop condition");
-                  exit_jump = compiler.emit_jump(OpCode.JUMP_IF_FALSE);
-                  compiler.emit_op(OpCode.POP); // Condition.
-                  // endregion
-                  return expr;
-                } else {
-                  return null;
-                }
-              }();
-              final right = () {
-                if (!parser.match(TokenType.RIGHT_PAREN)) {
-                  // region emitter
-                  final body_jump = compiler.emit_jump(OpCode.JUMP);
-                  final increment_start = compiler.current_chunk.count;
-                  // endregion
-                  final expr = expression();
-                  // region emitter
-                  compiler.emit_op(OpCode.POP);
-                  parser.consume(TokenType.RIGHT_PAREN, "Expect ')' after for clauses");
-                  compiler.emit_loop(loop_start);
-                  loop_start = increment_start;
-                  compiler.patch_jump(body_jump);
-                  // endregion
-                  return expr;
-                } else {
-                  return null;
-                }
-              }();
-              final stmt = statement();
-              // region emitter
-              compiler.emit_loop(loop_start);
-              if (exit_jump != -1) {
-                compiler.patch_jump(exit_jump);
-                compiler.emit_op(OpCode.POP); // Condition.
+          return compiler.visit_classic_for(
+            () {
+              if (parser.match(TokenType.SEMICOLON)) {
+                return null;
+              } else if (parser.match(TokenType.VAR)) {
+                return LoopLeftVari(
+                  decl: var_declaration(),
+                );
+              } else {
+                final expr = expression();
+                parser.consume(TokenType.SEMICOLON, 'Expect a newline after expression');
+                return LoopLeftExpr(
+                  expr: expr,
+                );
               }
-              // endregion
-              return StmtLoop(
-                left: left,
-                center: center,
-                right: right,
-                body: stmt,
-              );
             },
+            () {
+              if (parser.match(TokenType.SEMICOLON)) {
+                return null;
+              } else {
+                final expr = expression();
+                parser.consume(TokenType.SEMICOLON, "Expect ';' after loop condition");
+                return expr;
+              }
+            },
+            () {
+              if (parser.match(TokenType.RIGHT_PAREN)) {
+                return null;
+              } else {
+                return () {
+                  final expr = expression();
+                  parser.consume(TokenType.RIGHT_PAREN, "Expect ')' after for clauses");
+                  return expr;
+                };
+              }
+            },
+            statement,
           );
         } else {
-          return wrap_in_scope(
-            fn: () {
-              parse_variable('Expect variable name', compiler);
-              // region emitter
-              compiler.emit_op(OpCode.NIL);
-              compiler.define_variable(0, token: parser.previous); // Remove 0
-              final stack_idx = compiler.locals.length - 1;
-              // endregion
-              if (parser.match(TokenType.COMMA)) {
-                parse_variable('Expect variable name', compiler);
-                // region emitter
-                compiler.emit_op(OpCode.NIL);
-                compiler.define_variable(0, token: parser.previous);
-                // endregion
-              } else {
-                // region emitter
-                // Create dummy value slot
-                compiler.add_local(
-                  const SyntheticTokenImpl(
-                    type: TokenType.IDENTIFIER,
-                    str: '_for_val_',
-                  ),
-                );
-                compiler.emit_constant(0); // Emit a zero to permute val & key
-                compiler.mark_local_variable_initialized();
-                // endregion
-              }
-              // region emitter
-              // Now add two dummy local variables. Idx & entries
-              compiler.add_local(
-                const SyntheticTokenImpl(
-                  type: TokenType.IDENTIFIER,
-                  str: '_for_idx_',
-                ),
-              );
-              compiler.emit_op(OpCode.NIL);
-              compiler.mark_local_variable_initialized();
-              compiler.add_local(
-                const SyntheticTokenImpl(
-                  type: TokenType.IDENTIFIER,
-                  str: '_for_iterable_',
-                ),
-              );
-              compiler.emit_op(OpCode.NIL);
-              compiler.mark_local_variable_initialized();
-              // Rest of the loop
-              parser.consume(TokenType.IN, "Expect 'in' after loop variables");
-              // endregion
-              final iterable = expression();
-              // region emitter
-              // Iterator
-              final loop_start = compiler.current_chunk.count;
-              compiler.emit_bytes(OpCode.CONTAINER_ITERATE.index, stack_idx);
-              final exit_jump = compiler.emit_jump(OpCode.JUMP_IF_FALSE);
-              compiler.emit_op(OpCode.POP); // Condition
-              // endregion
-              final body = statement();
-              // region emitter
-              compiler.emit_loop(loop_start);
-              // Exit
-              compiler.patch_jump(exit_jump);
-              compiler.emit_op(OpCode.POP); // Condition
-              // endregion
-              return StmtLoop2(
-                center: iterable,
-                body: body,
-              );
-            },
+          final key_name = () {
+            parser.consume(TokenType.IDENTIFIER, 'Expect variable name');
+            return parser.previous!;
+          }();
+          final value_name = () {
+            if (parser.match(TokenType.COMMA)) {
+              parser.consume(TokenType.IDENTIFIER, 'Expect variable name');
+              return parser.previous!;
+            } else {
+              return null;
+            }
+          }();
+          parser.consume(TokenType.IN, "Expect 'in' after loop variables");
+          return compiler.visit_iter_for<Expr, Stmt, StmtLoop2>(
+            key_name: key_name,
+            value_name: value_name,
+            iterable: expression,
+            body: statement,
+            make: (final iterable, final body) => StmtLoop2(
+              key_name: key_name,
+              value_name: value_name,
+              center: iterable,
+              body: body,
+            ),
           );
         }
       } else if (parser.match(TokenType.IF)) {
-        final expr = expression();
-        // region emitter
-        final then_jump = compiler.emit_jump(OpCode.JUMP_IF_FALSE);
-        compiler.emit_op(OpCode.POP);
-        // endregion
-        final stmt = statement();
-        // region emitter
-        final else_jump = compiler.emit_jump(OpCode.JUMP);
-        compiler.patch_jump(then_jump);
-        compiler.emit_op(OpCode.POP);
-        // endregion
-        if (parser.match(TokenType.ELSE)) {
-          statement();
-        }
-        // region emitter
-        compiler.patch_jump(else_jump);
-        // endregion
-        return StmtConditional(
-          expr: expr,
-          stmt: stmt,
+        return compiler.visit_if<Expr, Stmt, StmtConditional>(
+          expression,
+          statement,
+          () {
+            if (parser.match(TokenType.ELSE)) {
+              return statement();
+            } else {
+              return null;
+            }
+          },
+          (final a, final b, final c) => StmtConditional(
+            expr: a,
+            stmt: b,
+            other: c,
+          ),
         );
       } else if (parser.match(TokenType.RETURN)) {
         if (parser.match(TokenType.SEMICOLON)) {
-          // region emitter
-          compiler.emit_return();
-          // endregion
+          compiler.visit_return_empty();
           return const StmtRet(
             expr: null,
           );
         } else {
-          // region emitter
-          if (compiler.type == FunctionType.INITIALIZER) {
-            error_delegate.error_at_previous("Can't return a value from an initializer");
-          }
-          // endregion
-          final expr = expression();
-          // region emitter
-          parser.consume(TokenType.SEMICOLON, 'Expect a newline after return value');
-          compiler.emit_op(OpCode.RETURN);
-          // endregion
           return StmtRet(
-            expr: expr,
+            expr: compiler.visit_return_expr(
+              () {
+                final expr = expression();
+                parser.consume(TokenType.SEMICOLON, 'Expect a newline after return value');
+                return expr;
+              },
+            ),
           );
         }
       } else if (parser.match(TokenType.WHILE)) {
-        // region emitter
-        final loop_start = compiler.current_chunk.count;
-        // endregion
-        final expr = expression();
-        // region emitter
-        final exit_jump = compiler.emit_jump(OpCode.JUMP_IF_FALSE);
-        compiler.emit_op(OpCode.POP);
-        // endregion
-        final stmt = statement();
-        // region emitter
-        compiler.emit_loop(loop_start);
-        compiler.patch_jump(exit_jump);
-        compiler.emit_op(OpCode.POP);
-        // endregion
-        return StmtWhil(
-          expr: expr,
-          stmt: stmt,
+        return compiler.visit_while<Expr, Stmt, Stmt>(
+          expression,
+          statement,
+          (final expr, final stmt) => StmtWhil(
+            expr: expr,
+            stmt: stmt,
+          ),
         );
       } else if (parser.match(TokenType.LEFT_BRACE)) {
-        return wrap_in_scope(
-          fn: () {
-            final decls = <Declaration>[];
-            while (!parser.check(TokenType.RIGHT_BRACE) && !parser.check(TokenType.EOF)) {
-              decls.add(declaration());
-            }
-            parser.consume(TokenType.RIGHT_BRACE, 'Unterminated block');
-            return StmtBlock(
-              block: Block(
-                decls: decls,
-              ),
-            );
-          },
+        return StmtBlock(
+          block: Block(
+            decls: compiler.wrap_in_scope(
+              fn: () {
+                final decls = <Declaration>[];
+                while (!parser.check(TokenType.RIGHT_BRACE) && !parser.check(TokenType.EOF)) {
+                  decls.add(declaration(compiler));
+                }
+                parser.consume(TokenType.RIGHT_BRACE, 'Unterminated block');
+                return decls;
+              },
+            ),
+          ),
         );
       } else {
         final expr = expression();
-        // region emitter
         parser.consume(TokenType.SEMICOLON, 'Expect a newline after expression');
-        compiler.emit_op(OpCode.POP);
+        // region emitter
+        compiler.visit_expr_stmt();
         // endregion
         return StmtExpr(
           expr: expr,
@@ -1398,133 +1687,82 @@ class ParserAtCompiler {
     Block function_block(
       final FunctionType type,
     ) {
-      final new_compiler = CompilerWrappedImpl(
-        type: type,
-        enclosing: compiler,
-        parser: parser,
-      );
+      // TODO visit fn hide wrap, visit_fn_args and end_compiler from here.
+      final new_compiler = compiler.wrap(type);
       parser.consume(TokenType.LEFT_PAREN, "Expect '(' after function name");
-      final args = <NaturalToken?>[];
+      final args = <NaturalToken>[];
       if (!parser.check(TokenType.RIGHT_PAREN)) {
-        do {
-          // region emitter
-          new_compiler.function.arity++;
-          if (new_compiler.function.arity > 255) {
-            new_compiler.error_delegate.error_at_current("Can't have more than 255 parameters");
+        argloop: for(;;) {
+          parser.consume(TokenType.IDENTIFIER, 'Expect parameter name');
+          args.add(parser.previous!);
+          if (parser.match(TokenType.COMMA)) {
+            continue argloop;
+          } else {
+            break argloop;
           }
-          // endregion
-          parse_variable('Expect parameter name', new_compiler);
-          // region emitter
-          new_compiler.mark_local_variable_initialized();
-          // endregion
-          args.add(parser.previous);
-        } while (parser.match(TokenType.COMMA));
+        }
       }
-      // region emitter
-      for (int k = 0; k < args.length; k++) {
-        new_compiler.define_variable(0, token: args[k], peek_dist: args.length - 1 - k);
-      }
-      // endregion
+      new_compiler.visit_fn_args(args);
       parser.consume(TokenType.RIGHT_PAREN, "Expect ')' after parameters");
       parser.consume(TokenType.LEFT_BRACE, 'Expect function body');
-      final _parser = ParserAtCompiler(
-        parser: parser,
-        error_delegate: error_delegate,
-        compiler: new_compiler,
-      );
-      final decls = <Declaration>[];
-      while (!parser.check(TokenType.RIGHT_BRACE) && !parser.check(TokenType.EOF)) {
-        decls.add(
-          _parser.declaration(),
-        );
-      }
-      parser.consume(TokenType.RIGHT_BRACE, 'Unterminated block');
       final block = Block(
-        decls: decls,
+        decls: () {
+          final decls = <Declaration>[];
+          while (!parser.check(TokenType.RIGHT_BRACE) && !parser.check(TokenType.EOF)) {
+            final decl = declaration(new_compiler);
+            decls.add(decl);
+          }
+          parser.consume(TokenType.RIGHT_BRACE, 'Unterminated block');
+          return decls;
+        }(),
       );
-      // region emitter
-      final function = new_compiler.end_compiler();
-      compiler.emit_bytes(OpCode.CLOSURE.index, compiler.make_constant(function));
-      for (var i = 0; i < new_compiler.upvalues.length; i++) {
-        compiler.emit_byte(new_compiler.upvalues[i].is_local ? 1 : 0);
-        compiler.emit_byte(new_compiler.upvalues[i].index);
-      }
-      // endregion
+      new_compiler.end_compiler();
       return block;
     }
 
-    final decl = () {
+    Declaration parse_decl() {
       if (parser.match(TokenType.CLASS)) {
-        // class declaration
         parser.consume(TokenType.IDENTIFIER, 'Expect class name');
-        final class_name = parser.previous;
+        final class_name = parser.previous!;
         // region emitter
-        final name_constant = compiler.identifier_constant(class_name!);
-        compiler.declare_local_variable();
-        compiler.emit_bytes(OpCode.CLASS.index, name_constant);
-        compiler.define_variable(name_constant);
-        final class_compiler = ClassCompiler(
-          compiler.current_class,
-          parser.previous,
-          false,
-        );
-        compiler.current_class = class_compiler;
+        compiler.visit_class_name(class_name, parser.previous);
         // endregion
-        return wrap_in_scope(
+        return compiler.wrap_in_scope(
           fn: () {
             if (parser.match(TokenType.LESS)) {
               parser.consume(TokenType.IDENTIFIER, 'Expect superclass name');
               // region emitter
-              compiler.get_or_set<void>(
-                parser.previous!,
-                (final arg, final get_op, final set_op) {
-                  compiler.emit_bytes(get_op.index, arg);
-                },
-              );
-              if (CompilerMixin.identifiers_equal2(class_name, parser.previous!)) {
-                error_delegate.error_at_previous("A class can't inherit from itself");
-              }
-              compiler.add_local(
-                const SyntheticTokenImpl(
-                  type: TokenType.IDENTIFIER,
-                  str: 'super',
-                ),
-              );
-              compiler.define_variable(0);
-              compiler.get_or_set<void>(
-                class_name,
-                (final arg, final get_op, final set_op) {
-                  compiler.emit_bytes(get_op.index, arg);
-                },
-              );
-              compiler.emit_op(OpCode.INHERIT);
-              class_compiler.has_superclass = true;
+              compiler.visit_superclass(parser.previous!);
               // endregion
             }
             // region emitter
-            compiler.get_or_set<void>(
-              class_name,
-              (final arg, final get_op, final set_op) {
-                compiler.emit_bytes(get_op.index, arg);
-              },
-            );
+            compiler.visit_getter(class_name, (final _) {});
             // endregion
             parser.consume(TokenType.LEFT_BRACE, 'Expect class body');
-            final functions = <Block>[];
+            final functions = <Method>[];
             while (!parser.check(TokenType.RIGHT_BRACE) && !parser.check(TokenType.EOF)) {
-              // parse method
               parser.consume(TokenType.IDENTIFIER, 'Expect method name');
               // region emitter
-              final identifier = parser.previous!;
-              final constant = compiler.identifier_constant(identifier);
-              FunctionType type = FunctionType.METHOD;
-              if (identifier.str == 'init') {
-                type = FunctionType.INITIALIZER;
-              }
+              final method_name = parser.previous!;
+              final constant = compiler.identifier_constant(method_name);
               // endregion
-              functions.add(function_block(type));
+              functions.add(
+                Method(
+                  block: function_block(
+                    () {
+                      if (method_name.lexeme == 'init') {
+                        return FunctionType.INITIALIZER;
+                      } else {
+                        return FunctionType.METHOD;
+                      }
+                    }(),
+                  ),
+                  name: method_name,
+                ),
+              );
               // region emitter
-              compiler.emit_bytes(OpCode.METHOD.index, constant);
+              compiler.emit_byte(OpCode.METHOD.index);
+              compiler.emit_byte(constant);
               // endregion
             }
             parser.consume(TokenType.RIGHT_BRACE, 'Unterminated class body');
@@ -1538,19 +1776,15 @@ class ParserAtCompiler {
           },
         );
       } else if (parser.match(TokenType.FUN)) {
-        // fun declaration
-        final global = parse_variable('Expect function name', compiler);
-        // region emitter
-        final token = parser.previous!;
-        compiler.mark_local_variable_initialized();
-        // endregion
-        final block = function_block(FunctionType.FUNCTION);
-        // region emitter
-        compiler.define_variable(global, token: token);
-        // endregion
+        parser.consume(TokenType.IDENTIFIER, 'Expect function name');
+        final name = parser.previous!;
+        final block = compiler.visit_fun(
+          name,
+          () => function_block(FunctionType.FUNCTION),
+        );
         return DeclarationFun(
           block: block,
-          name: token,
+          name: name,
         );
       } else if (parser.match(TokenType.VAR)) {
         return var_declaration();
@@ -1559,7 +1793,9 @@ class ParserAtCompiler {
           stmt: statement(),
         );
       }
-    }();
+    }
+
+    final decl = parse_decl();
     if (parser.panic_mode) {
       parser.panic_mode = false;
       outer:
@@ -1577,7 +1813,7 @@ class ParserAtCompiler {
             case TokenType.PRINT:
             case TokenType.RETURN:
               break outer;
-              // ignore: no_default_cases
+            // ignore: no_default_cases
             default:
               parser.advance();
               continue outer;
@@ -1635,7 +1871,7 @@ class Table {
 // region native classes
 abstract class ObjNativeClass {
   final String? name;
-  final Map<String?, Object?> properties = {};
+  final Map<String?, Object?> properties;
   final Map<String, Type>? properties_types;
   final List<String> init_arg_keys;
 
@@ -1646,7 +1882,7 @@ abstract class ObjNativeClass {
     final List<Object?>? stack,
     final int? arg_idx,
     final int? arg_count,
-  }) {
+  }) : properties = {} {
     if (arg_count != init_arg_keys.length) {
       arg_count_error(init_arg_keys.length, arg_count);
     }
@@ -2161,7 +2397,11 @@ const LIST_NATIVE_FUNCTIONS = <String, ListNativeFunction>{
 
 // Map native functions
 double map_length(
-    final Map<dynamic, dynamic> map, final List<Object?> stack, final int arg_idx, final int arg_count,) {
+  final Map<dynamic, dynamic> map,
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
   if (arg_count != 0) {
     arg_count_error(0, arg_count);
   }
@@ -2169,7 +2409,11 @@ double map_length(
 }
 
 List<dynamic> map_keys(
-    final Map<dynamic, dynamic> map, final List<Object?> stack, final int arg_idx, final int arg_count,) {
+  final Map<dynamic, dynamic> map,
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
   if (arg_count != 0) {
     arg_count_error(0, arg_count);
   }
@@ -2177,13 +2421,21 @@ List<dynamic> map_keys(
 }
 
 List<dynamic> map_values(
-    final Map<dynamic, dynamic> map, final List<Object?> stack, final int arg_idx, final int arg_count,) {
+  final Map<dynamic, dynamic> map,
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
   if (arg_count != 0) arg_count_error(0, arg_count);
   return map.values.toList();
 }
 
 bool map_has(
-    final Map<dynamic, dynamic> map, final List<Object?> stack, final int arg_idx, final int arg_count,) {
+  final Map<dynamic, dynamic> map,
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
   if (arg_count != 1) {
     arg_count_error(1, arg_count);
   }
@@ -2191,7 +2443,11 @@ bool map_has(
 }
 
 typedef MapNativeFunction = Object Function(
-    Map<dynamic, dynamic> list, List<Object?> stack, int arg_idx, int arg_count,);
+  Map<dynamic, dynamic> list,
+  List<Object?> stack,
+  int arg_idx,
+  int arg_count,
+);
 
 const MAP_NATIVE_FUNCTIONS = <String, MapNativeFunction>{
   'length': map_length,
@@ -2201,14 +2457,24 @@ const MAP_NATIVE_FUNCTIONS = <String, MapNativeFunction>{
 };
 
 // String native functions
-double str_length(final String str, final List<Object?> stack, final int arg_idx, final int arg_count,) {
+double str_length(
+  final String str,
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
   if (arg_count != 0) {
     arg_count_error(0, arg_count);
   }
   return str.length.toDouble();
 }
 
-typedef StringNativeFunction = Object Function(String list, List<Object?> stack, int arg_idx, int arg_count,);
+typedef StringNativeFunction = Object Function(
+  String list,
+  List<Object?> stack,
+  int arg_idx,
+  int arg_count,
+);
 
 const STRING_NATIVE_FUNCTIONS = <String, StringNativeFunction>{
   'length': str_length,
@@ -2354,8 +2620,11 @@ String? object_to_string(
 // region error
 mixin LangError {
   String get type;
+
   NaturalToken? get token;
+
   int? get line;
+
   String? get msg;
 
   void dump(
@@ -2374,7 +2643,7 @@ mixin LangError {
       } else if (token!.type == TokenType.ERROR) {
         // Nothing.
       } else {
-        buf.write(' at \'${token!.str}\'');
+        buf.write(' at \'${token!.lexeme}\'');
       }
     } else if (line != null) {
       buf.write('[$line] $type error');
@@ -2392,10 +2661,10 @@ class CompilerError with LangError {
   @override
   final String? msg;
 
-  const CompilerError(
-    final this.token,
-    final this.msg,
-  );
+  const CompilerError({
+    required final this.token,
+    required final this.msg,
+  });
 
   @override
   String get type => "Compile";
@@ -2753,7 +3022,7 @@ Object value_clone_deep(
   } else if (value is List<Object>) {
     return value.map((final e) => value_clone_deep(e)).toList();
   } else {
-    // TODO: clone object instances
+    // TODO: clone object instances.
     return value;
   }
 }
@@ -2856,7 +3125,7 @@ bool values_equal(
   final Object? a,
   final Object? b,
 ) {
-  // TODO: confirm behavior (especially for deep equality)
+  // TODO: confirm behavior (especially for deep equality).
   // Equality relied on this function, but not hashmap indexing
   // It might trigger strange cases where two equal lists don't have the same hashcode
   if (a is List<dynamic> && b is List<dynamic>) {

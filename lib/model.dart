@@ -1,7 +1,7 @@
 abstract class SyntheticToken {
   TokenType get type;
 
-  String? get str;
+  String? get lexeme;
 }
 
 abstract class NaturalToken implements SyntheticToken {
@@ -79,11 +79,11 @@ class SyntheticTokenImpl implements SyntheticToken {
   @override
   final TokenType type;
   @override
-  final String? str;
+  final String? lexeme;
 
   const SyntheticTokenImpl({
     required final this.type,
-    required final this.str,
+    required final this.lexeme,
   });
 
   @override
@@ -92,23 +92,23 @@ class SyntheticTokenImpl implements SyntheticToken {
       other is SyntheticTokenImpl &&
           runtimeType == other.runtimeType &&
           type == other.type &&
-          str == other.str;
+          lexeme == other.lexeme;
 
   @override
-  int get hashCode => type.hashCode ^ str.hashCode;
+  int get hashCode => type.hashCode ^ lexeme.hashCode;
 }
 
 class NaturalTokenImpl implements NaturalToken {
   @override
   final TokenType type;
   @override
-  final String str;
+  final String lexeme;
   @override
   final Loc loc;
 
   const NaturalTokenImpl({
     required final this.type,
-    required final this.str,
+    required final this.lexeme,
     required final this.loc,
   });
 
@@ -124,7 +124,7 @@ class NaturalTokenImpl implements NaturalToken {
       if (type == TokenType.EOF) {
         return '';
       } else if (type == TokenType.NUMBER || type == TokenType.STRING || type == TokenType.IDENTIFIER) {
-        return str;
+        return lexeme;
       } else {
         return _TOKEN_REPR[type]!;
       }
@@ -134,10 +134,10 @@ class NaturalTokenImpl implements NaturalToken {
   @override
   bool operator ==(
     final Object o,
-  ) => o is NaturalToken && o.type == type && o.loc == loc && o.str == str;
+  ) => o is NaturalToken && o.type == type && o.loc == loc && o.lexeme == lexeme;
 
   @override
-  int get hashCode => type.hashCode ^ loc.hashCode ^ str.hashCode;
+  int get hashCode => type.hashCode ^ loc.hashCode ^ lexeme.hashCode;
 
   static const _TOKEN_REPR = {
     // Symbols

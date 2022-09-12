@@ -21,7 +21,7 @@ abstract class Declaration {
 }
 
 class DeclarationClazz implements Declaration {
-  final List<Block> functions;
+  final List<Method> functions;
 
   const DeclarationClazz({
     required final this.functions,
@@ -88,6 +88,18 @@ class DeclarationStmt implements Declaration {
     required final Z Function(DeclarationStmt) stmt,
   }) =>
       stmt(this);
+}
+// endregion
+
+// region method
+class Method {
+  final NaturalToken name;
+  final Block block;
+
+  const Method({
+    required final this.name,
+    required final this.block,
+  });
 }
 // endregion
 
@@ -162,12 +174,16 @@ class StmtLoop implements Stmt {
 }
 
 class StmtLoop2 implements Stmt {
+  final NaturalToken key_name;
+  final NaturalToken? value_name;
   final Expr center;
   final Stmt body;
 
   const StmtLoop2({
     required final this.center,
     required final this.body,
+    required final this.key_name,
+    required final this.value_name,
   });
 
   @override
@@ -186,10 +202,12 @@ class StmtLoop2 implements Stmt {
 class StmtConditional implements Stmt {
   final Expr expr;
   final Stmt stmt;
+  final Stmt? other;
 
   const StmtConditional({
     required final this.expr,
     required final this.stmt,
+    required final this.other,
   });
 
   @override
@@ -327,7 +345,7 @@ class ExprMap implements Expr {
 }
 
 class ExprCall implements Expr {
-  final List<Expr> args;
+  final ArgumentList args;
 
   const ExprCall({
     required final this.args,
@@ -335,7 +353,7 @@ class ExprCall implements Expr {
 }
 
 class ExprInvoke implements Expr {
-  final List<Expr> args;
+  final ArgumentList args;
   final NaturalToken name;
 
   const ExprInvoke({
@@ -364,15 +382,21 @@ class ExprSet implements Expr {
 
 class ExprList implements Expr {
   final List<Expr> values;
+  final int val_count;
 
   const ExprList({
     required final this.values,
+    required final this.val_count,
   });
 }
 
 class ExprNil implements Expr {
   const ExprNil();
 }
+
+class ExprTruth implements Expr {}
+
+class ExprFalsity implements Expr {}
 
 class ExprmapMapEntry {
   final Expr key;
@@ -381,6 +405,16 @@ class ExprmapMapEntry {
   const ExprmapMapEntry({
     required final this.key,
     required final this.value,
+  });
+}
+// endregion
+
+// region arg list
+class ArgumentList {
+  final List<Expr> args;
+
+  const ArgumentList({
+    required final this.args,
   });
 }
 // endregion

@@ -80,13 +80,13 @@ class _Lexer {
   NaturalToken makeToken(final TokenType type) {
     var str = source.substring(start, current);
     if (type == TokenType.STRING) str = str.substring(1, str.length - 1);
-    final token = NaturalTokenImpl(type: type, loc: loc, str: str);
+    final token = NaturalTokenImpl(type: type, loc: loc, lexeme: str);
     loc = LocImpl(loc.line);
     return token;
   }
 
   NaturalToken errorToken(final String message) {
-    return NaturalTokenImpl(type: TokenType.ERROR, loc: loc, str: message);
+    return NaturalTokenImpl(type: TokenType.ERROR, loc: loc, lexeme: message);
   }
 
   void skipWhitespace() {
