@@ -4,8 +4,12 @@ abstract class SyntheticToken {
   String? get lexeme;
 }
 
+// TODO the compiler should not depend on this?
 abstract class NaturalToken implements SyntheticToken {
   Loc get loc;
+
+  @override
+  String get lexeme;
 }
 
 enum TokenType {
@@ -70,7 +74,7 @@ enum TokenType {
   EOF,
 }
 
-// TODO migrate to store and absolute offset and no line information.
+// TODO migrate to an absolute offset and no line information.
 abstract class Loc {
   int get line;
 }

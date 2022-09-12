@@ -1,4 +1,4 @@
-import 'model.dart';
+import '../models/model.dart';
 
 List<NaturalToken> run_lexer({
   required final String source,

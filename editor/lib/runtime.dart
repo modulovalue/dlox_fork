@@ -2,8 +2,9 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:dlox/compiler.dart';
-import 'package:dlox/lexer.dart';
-import 'package:dlox/vm.dart';
+import 'package:dlox/models/errors.dart';
+import 'package:dlox/arrows/code_to_tokens.dart';
+import 'package:dlox/arrows/objfunction_to_output.dart';
 import 'package:flutter/material.dart';
 
 class Runtime extends ChangeNotifier {
@@ -119,7 +120,7 @@ class Runtime extends ChangeNotifier {
       final debug = Debug(
         true,
       );
-      compiler_result = run_compiler(
+      compiler_result = run_dlox_compiler(
         tokens: run_lexer(
           source: source,
         ),

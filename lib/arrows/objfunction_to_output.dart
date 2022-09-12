@@ -2,13 +2,11 @@ import 'dart:math';
 
 import 'package:sprintf/sprintf.dart';
 
-import 'compiler.dart'
+import '../compiler.dart'
     show
         Chunk,
         CompilationResult,
-        Debug,
         LIST_NATIVE_FUNCTIONS,
-        LangError,
         MAP_NATIVE_FUNCTIONS,
         NATIVE_CLASSES,
         NATIVE_FUNCTIONS,
@@ -27,9 +25,8 @@ import 'compiler.dart'
         OpCode,
         STRING_NATIVE_FUNCTIONS,
         Table,
-        UINT8_COUNT,
-        value_to_string,
-        values_equal;
+        UINT8_COUNT;
+import '../models/errors.dart';
 
 // TODO decouple vm from compiler.
 class VM {
@@ -412,8 +409,8 @@ class VM {
       return false;
     } else {
       final bound = ObjBoundMethod(
-        peek(0),
-        method as ObjClosure,
+        receiver: peek(0),
+        method: method as ObjClosure,
       );
       pop();
       push(bound);
@@ -1096,4 +1093,70 @@ class RuntimeError with LangError {
 
   @override
   Null get token => null;
+}
+bool values_equal(
+    final Object? a,
+    final Object? b,
+    ) {
+  // TODO: confirm behavior (especially for deep equality).
+  // Equality relied on this function, but not hashmap indexing
+  // It might trigger strange cases where two equal lists don't have the same hashcode
+  if (a is List<dynamic> && b is List<dynamic>) {
+    return _list_equals<dynamic>(a, b);
+  } else if (a is Map<dynamic, dynamic> && b is Map<dynamic, dynamic>) {
+    return _map_equals<dynamic, dynamic>(a, b);
+  } else {
+    return a == b;
+  }
+}
+
+bool _list_equals<T>(
+    final List<T>? a,
+    final List<T>? b,
+    ) {
+  if (a == null) {
+    return b == null;
+  } else if (b == null || a.length != b.length) {
+    return false;
+  } else if (identical(a, b)) {
+    return true;
+  } else {
+    for (int index = 0; index < a.length; index += 1) {
+      if (a[index] != b[index]) {
+        return false;
+      }
+    }
+    return true;
+  }
+}
+
+bool _map_equals<T, U>(
+    final Map<T, U>? a,
+    final Map<T, U>? b,
+    ) {
+  if (a == null) {
+    return b == null;
+  } else if (b == null || a.length != b.length) {
+    return false;
+  } else if (identical(a, b)) {
+    return true;
+  } else {
+    for (final key in a.keys) {
+      if (!b.containsKey(key) || b[key] != a[key]) {
+        return false;
+      }
+    }
+    return true;
+  }
+}
+
+int hash_string(
+    final String key,
+    ) {
+  int hash = 2166136261;
+  for (int i = 0; i < key.length; i++) {
+    hash ^= key.codeUnitAt(i);
+    hash *= 16777619;
+  }
+  return hash;
 }

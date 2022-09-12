@@ -2,9 +2,10 @@ import 'dart:io';
 
 import 'package:path/path.dart';
 
-import 'compiler.dart';
-import 'model.dart';
-import 'vm.dart';
+import '../arrows/objfunction_to_output.dart';
+import '../compiler.dart';
+import '../models/errors.dart';
+import '../models/model.dart';
 
 // TODO have fixtures for the lexer in the style of esprima.
 // TODO have a benchmark suite that exposes just files.
@@ -16,7 +17,7 @@ abstract class DLoxTestSuite {
     final vm = VM(
       silent: true,
     );
-    final dir_list = dir_contents(Directory(deps.dlox_lib_path.resolve("test").path));
+    final dir_list = dir_contents(Directory(deps.dlox_lib_path.resolve("../lib/test").path));
     for (int k = 0; k < dir_list.length; k++) {
       final dir = dir_list[k];
       wrapper.run_group(
@@ -37,7 +38,7 @@ abstract class DLoxTestSuite {
                   line_number.add(line);
                 }
                 // Compile test
-                final compiler_result = run_compiler(
+                final compiler_result = run_dlox_compiler(
                   tokens: deps.lexer(
                     source,
                   ),

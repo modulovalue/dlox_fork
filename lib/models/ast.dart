@@ -22,9 +22,11 @@ abstract class Declaration {
 
 class DeclarationClazz implements Declaration {
   final List<Method> functions;
+  final NaturalToken name;
 
   const DeclarationClazz({
     required final this.functions,
+    required final this.name,
   });
 
   @override
@@ -304,7 +306,9 @@ class StmtExpr implements Stmt {
     required final Z Function(StmtExpr) expr,
   }) => expr(this);
 }
+// endregion
 
+// region loop left
 abstract class LoopLeft {}
 
 class LoopLeftVari implements LoopLeft {
@@ -337,7 +341,7 @@ class Expr {
 }
 
 class ExprMap implements Expr {
-  final List<ExprmapMapEntry> entries;
+  final List<MapEntry<Expr, Expr>> entries;
 
   const ExprMap({
     required final this.entries,
@@ -380,6 +384,34 @@ class ExprSet implements Expr {
   });
 }
 
+class ExprSet2 implements Expr {
+  final Expr arg;
+  final NaturalToken name;
+
+  const ExprSet2({
+    required final this.arg,
+    required final this.name,
+  });
+}
+
+class ExprGetSet2 implements Expr {
+  final Expr? arg;
+  final NaturalToken name;
+
+  const ExprGetSet2({
+    required final this.arg,
+    required final this.name,
+  });
+}
+
+class ExprGet2 implements Expr {
+  final NaturalToken name;
+
+  const ExprGet2({
+    required final this.name,
+  });
+}
+
 class ExprList implements Expr {
   final List<Expr> values;
   final int val_count;
@@ -394,17 +426,73 @@ class ExprNil implements Expr {
   const ExprNil();
 }
 
-class ExprTruth implements Expr {}
+class ExprString implements Expr {
+  final NaturalToken token;
 
-class ExprFalsity implements Expr {}
+  const ExprString({
+    required final this.token,
+  });
+}
 
-class ExprmapMapEntry {
-  final Expr key;
-  final Expr value;
+class ExprNumber implements Expr {
+  final NaturalToken value;
 
-  const ExprmapMapEntry({
-    required final this.key,
+  const ExprNumber({
     required final this.value,
+  });
+}
+
+class ExprObject implements Expr {
+  const ExprObject();
+}
+
+class ExprListGetter implements Expr {
+  final Expr? first;
+  final Expr? second;
+
+  const ExprListGetter({
+    required final this.first,
+    required final this.second,
+  });
+}
+
+class ExprListSetter implements Expr {
+  final Expr? first;
+  final Expr? second;
+
+  const ExprListSetter({
+    required final this.first,
+    required final this.second,
+  });
+}
+
+class ExprSuperaccess implements Expr {
+  final NaturalToken kw;
+  final ArgumentList? args;
+
+  const ExprSuperaccess({
+    required final this.kw,
+    required final this.args,
+});
+}
+
+class ExprTruth implements Expr {
+  const ExprTruth();
+}
+
+class ExprFalsity implements Expr {
+  const ExprFalsity();
+}
+
+class ExprSelf implements Expr {
+  const ExprSelf();
+}
+
+class ExprComposite implements Expr {
+  final List<Expr?> exprs;
+
+  const ExprComposite({
+    required final this.exprs,
   });
 }
 // endregion
