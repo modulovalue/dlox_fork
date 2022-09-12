@@ -390,14 +390,8 @@ mixin CompilerMixin implements Compiler {
     }
   }
 
-  T get_or_set<T>(
+  MapEntry<int, MapEntry<OpCode, OpCode>> get_or_set2(
     final SyntheticToken name,
-    final T Function(
-      int,
-      OpCode get_op,
-      OpCode set_op,
-    )
-        fn,
   ) {
     int? arg = resolve_local(name);
     OpCode get_op;
@@ -417,7 +411,13 @@ mixin CompilerMixin implements Compiler {
       get_op = OpCode.GET_LOCAL;
       set_op = OpCode.SET_LOCAL;
     }
-    return fn(arg, get_op, set_op);
+    return MapEntry(
+      arg,
+      MapEntry(
+        get_op,
+        set_op,
+      ),
+    );
   }
 
   T wrap_in_scope<T>({
@@ -457,40 +457,26 @@ mixin CompilerMixin implements Compiler {
   void visit_set_post(
     final SyntheticToken name,
   ) {
-    get_or_set<void>(
-      name,
-      (final arg, final get_op, final set_op) {
-        emit_byte(set_op.index);
-        emit_byte(arg);
-      },
-    );
+    final data = get_or_set2(name);
+    emit_byte(data.value.value.index);
+    emit_byte(data.key);
   }
 
-  T visit_getter<T>(
+  @override
+  MapEntry<int, MapEntry<OpCode, OpCode>> visit_getter1(
     final SyntheticToken name,
-    final T Function(void Function(OpCode type) p1) setter,
   ) {
-    return get_or_set<T>(
-      name,
-      (final arg, final get_op, final set_op) {
-        emit_byte(get_op.index);
-        emit_byte(arg);
-        return setter(
-          (final op) {
-            emit_op(op);
-            emit_byte(set_op.index);
-            emit_byte(arg);
-          },
-        );
-      },
-    );
+    final data = get_or_set2(name);
+    emit_byte(data.value.key.index);
+    emit_byte(data.key);
+    return data;
   }
 
   @override
   void visit_get_post(
     final SyntheticToken name,
   ) {
-    visit_getter(name, (final _) {});
+    visit_getter1(name);
   }
 
   @override
@@ -728,35 +714,32 @@ mixin CompilerMixin implements Compiler {
       error_delegate.error_at_previous("Can't use 'super' in a class with no superclass");
     }
     final name = identifier_constant(name_token);
-    visit_getter(
+    visit_getter1(
       const SyntheticTokenImpl(
         type: TokenType.IDENTIFIER,
         lexeme: 'this',
       ),
-      (final _) {},
     );
     final _args = arg_count();
     // endregion
     if (_args != null) {
       // region emitter
-      visit_getter(
+      visit_getter1(
         const SyntheticTokenImpl(
           type: TokenType.IDENTIFIER,
           lexeme: 'super',
         ),
-        (final _) {},
       );
       emit_byte(OpCode.SUPER_INVOKE.index);
       emit_byte(name);
       emit_byte(_args.length);
       // endregion
     } else {
-      visit_getter(
+      visit_getter1(
         const SyntheticTokenImpl(
           type: TokenType.IDENTIFIER,
           lexeme: 'super',
         ),
-        (final _) {},
       );
       emit_byte(OpCode.GET_SUPER.index);
       emit_byte(name);
@@ -845,7 +828,7 @@ mixin CompilerMixin implements Compiler {
         final superclass_name = superclass();
         if (superclass_name != null) {
           final class_name = current_class!.name!;
-          visit_getter(superclass_name, (final _) {});
+          visit_getter1(superclass_name);
           if (class_name.lexeme == superclass_name.lexeme) {
             error_delegate.error_at_previous("A class can't inherit from itself");
           }
@@ -856,11 +839,11 @@ mixin CompilerMixin implements Compiler {
             ),
           );
           define_variable(0);
-          visit_getter(class_name, (final _) {});
+          visit_getter1(class_name);
           emit_op(OpCode.INHERIT);
           current_class!.has_superclass = true;
         }
-        visit_getter(class_name, (final _) {});
+        visit_getter1(class_name);
         final functions = methods(
           (final name, final make_block) {
             final constant = identifier_constant(name);
@@ -895,7 +878,7 @@ mixin CompilerMixin implements Compiler {
     if (current_class == null) {
       error_delegate.error_at_previous("Can't use 'this' outside of a class");
     } else {
-      visit_getter(name, (final _) {});
+      visit_getter1(name);
     }
   }
 
@@ -948,44 +931,53 @@ mixin CompilerMixin implements Compiler {
     )
         match_pair,
   ) {
-    return visit_getter(
-      name,
-      (final setter) {
-        if (match_pair(TokenType.PLUS, TokenType.EQUAL)) {
-          // ignore: unused_local_variable
-          final expr = expression();
-          setter(OpCode.ADD);
-          return expr;
-        } else if (match_pair(TokenType.MINUS, TokenType.EQUAL)) {
-          // ignore: unused_local_variable
-          final expr = expression();
-          setter(OpCode.SUBTRACT);
-          return expr;
-        } else if (match_pair(TokenType.STAR, TokenType.EQUAL)) {
-          // ignore: unused_local_variable
-          final expr = expression();
-          setter(OpCode.MULTIPLY);
-          return expr;
-        } else if (match_pair(TokenType.SLASH, TokenType.EQUAL)) {
-          // ignore: unused_local_variable
-          final expr = expression();
-          setter(OpCode.DIVIDE);
-          return expr;
-        } else if (match_pair(TokenType.PERCENT, TokenType.EQUAL)) {
-          // ignore: unused_local_variable
-          final expr = expression();
-          setter(OpCode.MOD);
-          return expr;
-        } else if (match_pair(TokenType.CARET, TokenType.EQUAL)) {
-          // ignore: unused_local_variable
-          final expr = expression();
-          setter(OpCode.POW);
-        } else {
-          // Ignore.
-          return null;
-        }
-      },
-    );
+    if (match_pair(TokenType.PLUS, TokenType.EQUAL)) {
+      final data = visit_getter1(name);
+      final expr = expression();
+      emit_op(OpCode.ADD);
+      emit_byte(data.value.value.index);
+      emit_byte(data.key);
+      return expr;
+    } else if (match_pair(TokenType.MINUS, TokenType.EQUAL)) {
+      final data = visit_getter1(name);
+      final expr = expression();
+      emit_op(OpCode.SUBTRACT);
+      emit_byte(data.value.value.index);
+      emit_byte(data.key);
+      return expr;
+    } else if (match_pair(TokenType.STAR, TokenType.EQUAL)) {
+      final data = visit_getter1(name);
+      final expr = expression();
+      emit_op(OpCode.MULTIPLY);
+      emit_byte(data.value.value.index);
+      emit_byte(data.key);
+      return expr;
+    } else if (match_pair(TokenType.SLASH, TokenType.EQUAL)) {
+      final data = visit_getter1(name);
+      final expr = expression();
+      emit_op(OpCode.DIVIDE);
+      emit_byte(data.value.value.index);
+      emit_byte(data.key);
+      return expr;
+    } else if (match_pair(TokenType.PERCENT, TokenType.EQUAL)) {
+      final data = visit_getter1(name);
+      final expr = expression();
+      emit_op(OpCode.MOD);
+      emit_byte(data.value.value.index);
+      emit_byte(data.key);
+      return expr;
+    } else if (match_pair(TokenType.CARET, TokenType.EQUAL)) {
+      final data = visit_getter1(name);
+      final expr = expression();
+      emit_op(OpCode.POW);
+      emit_byte(data.value.value.index);
+      emit_byte(data.key);
+      return expr;
+    } else {
+      visit_getter1(name);
+      // Ignore.
+      return null;
+    }
   }
 
   @override
@@ -1305,6 +1297,10 @@ abstract class Compiler {
   void visit_print_post();
 
   void visit_set_post(
+    final SyntheticToken name,
+  );
+
+  MapEntry<int, MapEntry<OpCode, OpCode>> visit_getter1(
     final SyntheticToken name,
   );
 

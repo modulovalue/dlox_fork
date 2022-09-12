@@ -478,7 +478,7 @@ class ExprSelf implements Expr {
 }
 
 class ExprComposite implements Expr {
-  final List<Expr?> exprs;
+  final List<Expr> exprs;
 
   const ExprComposite({
     required final this.exprs,
@@ -487,6 +487,134 @@ class ExprComposite implements Expr {
 
 class ExprExpected implements Expr {
   const ExprExpected();
+}
+
+class ExprNegated implements Expr {
+  final Expr child;
+
+  const ExprNegated({
+    required final this.child,
+  });
+}
+
+class ExprNot implements Expr {
+  final Expr child;
+
+  const ExprNot({
+    required final this.child,
+  });
+}
+
+class ExprMinus implements Expr {
+  final Expr child;
+
+  const ExprMinus({
+    required final this.child,
+  });
+}
+
+class ExprPlus implements Expr {
+  final Expr child;
+
+  const ExprPlus({
+    required final this.child,
+  });
+}
+
+class ExprSlash implements Expr {
+  final Expr child;
+
+  const ExprSlash({
+    required final this.child,
+  });
+}
+
+class ExprStar implements Expr {
+  final Expr child;
+
+  const ExprStar({
+    required final this.child,
+  });
+}
+
+class ExprAnd implements Expr {
+  final Expr child;
+
+  const ExprAnd({
+    required final this.child,
+  });
+}
+
+class ExprOr implements Expr {
+  final Expr child;
+
+  const ExprOr({
+    required final this.child,
+  });
+}
+
+class ExprG implements Expr {
+  final Expr child;
+
+  const ExprG({
+    required final this.child,
+  });
+}
+
+class ExprGeq implements Expr {
+  final Expr child;
+
+  const ExprGeq({
+    required final this.child,
+  });
+}
+
+class ExprL implements Expr {
+  final Expr child;
+
+  const ExprL({
+    required final this.child,
+  });
+}
+
+class ExprLeq implements Expr {
+  final Expr child;
+
+  const ExprLeq({
+    required final this.child,
+  });
+}
+
+class ExprPow implements Expr {
+  final Expr child;
+
+  const ExprPow({
+    required final this.child,
+  });
+}
+
+class ExprModulo implements Expr {
+  final Expr child;
+
+  const ExprModulo({
+    required final this.child,
+  });
+}
+
+class ExprNeq implements Expr {
+  final Expr child;
+
+  const ExprNeq({
+    required final this.child,
+  });
+}
+
+class ExprEq implements Expr {
+  final Expr child;
+
+  const ExprEq({
+    required final this.child,
+  });
 }
 
 Z match_expr<Z>({
@@ -512,6 +640,22 @@ Z match_expr<Z>({
   required final Z Function(ExprSelf) self,
   required final Z Function(ExprComposite) composite,
   required final Z Function(ExprExpected) expected,
+  required final Z Function(ExprNegated) negated,
+  required final Z Function(ExprNot) not,
+  required final Z Function(ExprMinus) minus,
+  required final Z Function(ExprPlus) plus,
+  required final Z Function(ExprSlash) slash,
+  required final Z Function(ExprStar) star,
+  required final Z Function(ExprAnd) and,
+  required final Z Function(ExprOr) or,
+  required final Z Function(ExprG) g,
+  required final Z Function(ExprGeq) geq,
+  required final Z Function(ExprL) l,
+  required final Z Function(ExprLeq) leq,
+  required final Z Function(ExprPow) pow,
+  required final Z Function(ExprModulo) modulo,
+  required final Z Function(ExprNeq) neq,
+  required final Z Function(ExprEq) eq,
 }) {
   if (expr is ExprMap) return map(expr);
   if (expr is ExprMap) return map(expr);
@@ -536,6 +680,22 @@ Z match_expr<Z>({
   if (expr is ExprSelf) return self(expr);
   if (expr is ExprComposite) return composite(expr);
   if (expr is ExprExpected) return expected(expr);
+  if (expr is ExprNegated) return negated(expr);
+  if (expr is ExprNot) return not(expr);
+  if (expr is ExprMinus) return minus(expr);
+  if (expr is ExprPlus) return plus(expr);
+  if (expr is ExprSlash) return slash(expr);
+  if (expr is ExprStar) return star(expr);
+  if (expr is ExprAnd) return and(expr);
+  if (expr is ExprOr) return or(expr);
+  if (expr is ExprG) return g(expr);
+  if (expr is ExprGeq) return geq(expr);
+  if (expr is ExprL) return l(expr);
+  if (expr is ExprLeq) return leq(expr);
+  if (expr is ExprPow) return pow(expr);
+  if (expr is ExprModulo) return modulo(expr);
+  if (expr is ExprNeq) return neq(expr);
+  if (expr is ExprEq) return eq(expr);
   throw Exception("Invalid State");
 }
 // endregion
