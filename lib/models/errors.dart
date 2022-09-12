@@ -1,8 +1,12 @@
 import 'package:sprintf/sprintf.dart';
 
-import '../compiler.dart';
-import 'model.dart';
+import '../arrows/objfunction_to_output.dart';
+import 'ast.dart';
+import 'objfunction.dart';
+import 'op_code.dart';
 
+// TODO have two classes of errors: runtime and compiler and make them independent from each other.
+// TODO  retuse tostring by calling a function not via inheritance.
 mixin LangError {
   String get type;
 
@@ -58,13 +62,36 @@ class CompilerError with LangError {
   int? get line => token.loc.line;
 }
 
+class RuntimeError with LangError {
+  final RuntimeError? link;
+  @override
+  final int line;
+  @override
+  final String? msg;
+
+  const RuntimeError(
+    final this.line,
+    final this.msg, {
+    final this.link,
+  });
+
+  @override
+  String get type => "Runtime";
+
+  @override
+  Null get token => null;
+}
+
 class Debug {
   final bool silent;
   final StringBuffer buf;
+  final List<CompilerError> errors;
 
+  // TODO make silent named once editor is migrated to nnbd
   Debug(
     final this.silent,
-  ) : buf = StringBuffer();
+  ) : buf = StringBuffer(),
+      errors = [];
 
   String clear() {
     final str = buf.toString();
@@ -271,8 +298,12 @@ class Debug {
           final isLocal = chunk.code[offset++] == 1;
           // ignore: parameter_assignments
           final index = chunk.code[offset++];
-          stdwrite(sprintf(
-              '%04d      |                     %s %d\n', [offset - 2, isLocal ? 'local' : 'upvalue', index]));
+          stdwrite(
+            sprintf(
+              '%04d      |                     %s %d\n',
+              [offset - 2, isLocal ? 'local' : 'upvalue', index],
+            ),
+          );
         }
         return offset;
       case OpCode.CLOSE_UPVALUE:

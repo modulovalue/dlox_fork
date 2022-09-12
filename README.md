@@ -1,6 +1,10 @@
 This is a fork of dlox.
 
 The purpose of this repo is to provide a test suite for generated lexers.
+The purpose of this repo is to provide a test suite for generated parsers.
+
+TODO migrate editor
+TODO move editor be at the toplevel.
 
 ---
 Original README:

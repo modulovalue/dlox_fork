@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:dlox/compiler.dart';
 import 'package:dlox/models/errors.dart';
+import 'package:dlox/models/objfunction.dart';
 import 'package:dlox/arrows/code_to_tokens.dart';
 import 'package:dlox/arrows/objfunction_to_output.dart';
 import 'package:flutter/material.dart';
@@ -10,7 +11,7 @@ import 'package:flutter/material.dart';
 class Runtime extends ChangeNotifier {
   // State hooks
   String source;
-  final Function(CompilationResult) on_compiler_result;
+  final Function(ObjFunction, List<LangError>) on_compiler_result;
   final Function(InterpreterResult) on_interpreter_result;
 
   // Compiler timer
@@ -19,7 +20,8 @@ class Runtime extends ChangeNotifier {
   // Code variables
   VM vm;
   String compiled_source;
-  CompilationResult compiler_result;
+  ObjFunction compiler_function;
+  List<LangError> compiler_errors;
   InterpreterResult interpreter_result;
   bool running = false;
   bool stop_flag = false;
@@ -30,9 +32,9 @@ class Runtime extends ChangeNotifier {
   double average_ips = 0;
 
   // Buffers variables
-  final stdout = <String>[];
-  final vm_out = <String>[];
-  final compiler_out = <String>[];
+  final List<String> stdout = [];
+  final List<String> vm_out = [];
+  final List<String> compiler_out = [];
 
   Runtime({
     this.on_compiler_result,
@@ -109,7 +111,7 @@ class Runtime extends ChangeNotifier {
   }
 
   void run_compilation() {
-    if (source != null && (compiled_source != source || compiler_result == null)) {
+    if (source != null && (compiled_source != source || compiler_function == null)) {
       // Clear interpreter output.
       interpreter_result = null;
       on_interpreter_result(interpreter_result);
@@ -120,19 +122,20 @@ class Runtime extends ChangeNotifier {
       final debug = Debug(
         true,
       );
-      compiler_result = run_dlox_compiler(
+      compiler_function = run_dlox_compiler(
         tokens: run_lexer(
           source: source,
         ),
         debug: debug,
         trace_bytecode: true,
       );
+      compiler_errors = debug.errors;
       compiled_source = source;
       // Populate result
       final str = debug.buf.toString();
       _populate_buffer(compiler_out, str);
-      _process_errors(compiler_result.errors);
-      on_compiler_result(compiler_result);
+      _process_errors(debug.errors);
+      on_compiler_result(compiler_function, debug.errors);
     }
   }
 
@@ -143,13 +146,15 @@ class Runtime extends ChangeNotifier {
   bool _init_code() {
     // Compile if needed
     run_compilation();
-    if (compiler_result == null || compiler_result.errors.isNotEmpty) {
+    if (compiler_function == null || compiler_errors.isNotEmpty) {
       return false;
     }
-    if (vm.compiler_result != compiler_result) {
-      vm.set_function(compiler_result, FunctionParams());
-      interpreter_result = null;
-    }
+    vm.set_function(
+      compiler_function,
+      compiler_errors,
+      FunctionParams(),
+    );
+    interpreter_result = null;
     return true;
   }
 
@@ -198,16 +203,20 @@ class Runtime extends ChangeNotifier {
   }
 
   void reset() {
-    if (compiler_result == null) {
+    if (compiler_function == null) {
       return;
     }
-    if (compiler_result.errors.isNotEmpty) {
+    if (compiler_errors.isNotEmpty) {
       return;
     }
     // Clear output
     clear_output();
     // Set interpreter
-    vm.set_function(compiler_result, FunctionParams());
+    vm.set_function(
+      compiler_function,
+      compiler_errors,
+      FunctionParams(),
+    );
     interpreter_result = null;
     on_interpreter_result(interpreter_result);
     notifyListeners();

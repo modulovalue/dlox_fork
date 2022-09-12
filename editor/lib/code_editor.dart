@@ -1,8 +1,8 @@
 import 'package:editor/lox_mode.dart';
 import 'package:editor/runtime.dart';
-import 'package:dlox/compiler.dart';
 import 'package:dlox/arrows/objfunction_to_output.dart';
 import 'package:dlox/models/errors.dart';
+import 'package:dlox/models/objfunction.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_highlight/themes/monokai-sublime.dart';
@@ -24,7 +24,7 @@ class CodeEditor extends StatefulWidget {
 class CodeEditorState extends State<CodeEditor> {
   CodeController _codeController;
   InterpreterResult interpreterResult;
-  CompilationResult compilerResult;
+  ObjFunction compilerResult_function;
   final errorMap = <int, List<LangError>>{};
 
   @override
@@ -65,9 +65,9 @@ class CodeEditorState extends State<CodeEditor> {
     setState(() {});
   }
 
-  void setCompilerResult(CompilationResult result) {
-    this.compilerResult = result;
-    _setErrors(result?.errors);
+  void setCompilerResult(ObjFunction result, List<LangError> errors,) {
+    this.compilerResult_function = result;
+    _setErrors(errors);
   }
 
   void setInterpreterResult(InterpreterResult result) {

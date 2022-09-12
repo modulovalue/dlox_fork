@@ -6,27 +6,29 @@ import '../models/errors.dart';
 import 'code_to_tokens.dart';
 import 'objfunction_to_output.dart';
 
-void run_file(
-    final String path,
-    ) {
+void run_file({
+  required final String path,
+}) {
   final vm = VM(
     silent: false,
   );
   final source = File(path).readAsStringSync();
+  final debug = Debug(
+    false,
+  );
   final compiler_result = run_dlox_compiler(
     tokens: run_lexer(
       source: source,
     ),
-    debug: Debug(
-      false,
-    ),
+    debug: debug,
     trace_bytecode: false,
   );
-  if (compiler_result.errors.isNotEmpty) {
+  if (debug.errors.isNotEmpty) {
     exit(65);
   } else {
     vm.set_function(
       compiler_result,
+      debug.errors,
       const FunctionParams(),
     );
     final intepreter_result = vm.run();
@@ -46,20 +48,27 @@ void run_repl() {
     if (line == null) {
       break;
     }
-    final compilerResult = run_dlox_compiler(
+    final debug = Debug(
+      false,
+    );
+    final compiler_result = run_dlox_compiler(
       tokens: run_lexer(
         source: line,
       ),
-      debug: Debug(
-        false,
-      ),
+      debug: debug,
       trace_bytecode: false,
     );
-    if (compilerResult.errors.isNotEmpty) {
+    if (debug.errors.isNotEmpty) {
       continue;
     }
     final globals = Map.fromEntries(vm.globals.data.entries);
-    vm.set_function(compilerResult, FunctionParams(globals: globals));
+    vm.set_function(
+      compiler_result,
+      debug.errors,
+      FunctionParams(
+        globals: globals,
+      ),
+    );
     vm.run();
   }
 }

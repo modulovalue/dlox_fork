@@ -2,13 +2,18 @@ import 'dart:io';
 
 import 'package:path/path.dart';
 
+// TODO remove this
 import '../arrows/objfunction_to_output.dart';
+// TODO remove this
 import '../compiler.dart';
+// TODO remove this
+import '../models/ast.dart';
+// TODO remove this
 import '../models/errors.dart';
-import '../models/model.dart';
 
-// TODO have fixtures for the lexer in the style of esprima.
+// TODO have fixtures for the lexer in the style of esprima?
 // TODO have a benchmark suite that exposes just files.
+// TODO move into the one level up test directory once there are no dependencies here anymore.
 abstract class DLoxTestSuite {
   static void run<R>({
     required final DLoxTestSuiteDependencies deps,
@@ -38,13 +43,14 @@ abstract class DLoxTestSuite {
                   line_number.add(line);
                 }
                 // Compile test
+                final debug = Debug(
+                  true,
+                );
                 final compiler_result = run_dlox_compiler(
                   tokens: deps.lexer(
                     source,
                   ),
-                  debug: Debug(
-                    true,
-                  ),
+                  debug: debug,
                   trace_bytecode: false,
                 );
                 // Compiler error
@@ -56,13 +62,17 @@ abstract class DLoxTestSuite {
                   if (msg.endsWith('.')) msg = msg.substring(0, msg.length - 1);
                   return line.toString() + ':' + msg;
                 }).toSet();
-                Set<String> err_list = compiler_result.errors.map((final e) => '${e.token.loc.line}:${e.msg}').toSet();
+                Set<String> err_list = debug.errors.map((final e) => '${e.token.loc.line}:${e.msg}').toSet();
                 wrapper.run_test("test", (final test_context) {
                   if (set_eq(err_ref, err_list)) {
                     if (err_list.isEmpty) {
                       // Run test
                       vm.stdout.clear();
-                      vm.set_function(compiler_result, const FunctionParams());
+                      vm.set_function(
+                        compiler_result,
+                        debug.errors,
+                        const FunctionParams(),
+                      );
                       final intepreter_result = vm.run();
                       // Interpreter errors
                       err_exp = RegExp(r'// Runtime error:(.+)');

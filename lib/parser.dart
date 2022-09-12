@@ -1,8 +1,8 @@
-import 'compiler.dart' show Compiler, FunctionType;
+// ignore_for_file: no_default_cases
+
 import 'compiler.dart';
 import 'models/ast.dart';
 import 'models/errors.dart';
-import 'models/model.dart';
 
 MapEntry<Parser, ErrorDelegate> make_parser({
   required final List<NaturalToken> tokens,
@@ -19,8 +19,6 @@ MapEntry<Parser, ErrorDelegate> make_parser({
 class _ParserImpl implements Parser, ErrorDelegate {
   final List<NaturalToken> tokens;
   @override
-  final List<CompilerError> errors;
-  @override
   final Debug debug;
   NaturalToken? current;
   NaturalToken? previous;
@@ -30,7 +28,7 @@ class _ParserImpl implements Parser, ErrorDelegate {
   _ParserImpl({
     required final this.tokens,
     required final this.debug,
-  })  : errors = [],
+  })  :
         current_idx = 0,
         panic_mode = false;
 
@@ -51,7 +49,7 @@ class _ParserImpl implements Parser, ErrorDelegate {
         token: token!,
         msg: message,
       );
-      errors.add(error);
+      debug.errors.add(error);
       error.dump(debug);
     }
   }
@@ -146,24 +144,90 @@ class _ParserImpl implements Parser, ErrorDelegate {
     required final Compiler compiler,
   }) {
     Expr expression() {
+      Expr compile_expr(
+        final Expr expr,
+      ) {
+        match_expr<void>(
+          expr: expr,
+          get2: (final a) => compiler.visit_get_post(a.name),
+          string: (final a) => compiler.visit_string_post(a.token.lexeme),
+          number: (final a) => compiler.visit_number_post(a.value.lexeme),
+          object: (final a) => compiler.visit_object_post(),
+          self: (final a) => compiler.visit_self_post(previous!),
+          nil: (final a) => compiler.visit_nil_post(),
+          falsity: (final a) => compiler.visit_falsity_post(),
+          truth: (final a) => compiler.visit_truth_post(),
+          map: (final a) {
+            // TODO
+          },
+          call: (final a) {
+            // TODO
+          },
+          invoke: (final a) {
+            // TODO
+          },
+          get: (final a) {
+            // TODO
+          },
+          set: (final a) {
+            // TODO
+          },
+          set2: (final a) {
+            compile_expr(a.arg);
+            compiler.visit_set_post(a.name);
+          },
+          getset2: (final a) {
+            // TODO
+          },
+          list: (final a) {
+            // TODO
+          },
+          listgetter: (final a) {
+            // TODO
+          },
+          listsetter: (final a) {
+            // TODO
+          },
+          superaccess: (final a) {
+            // TODO
+          },
+          composite: (final a) {
+            // TODO
+          },
+          expected: (final a) {
+            // TODO
+          },
+        );
+        return expr;
+      }
+
+      // Expr parse_expr(
+      //   final Precedence precedence,
+      // ) {
+      //   return const ExprExpected();
+      // }
+      //
+      // final expr = parse_expr(Precedence.ASSIGNMENT);
+      // compile_expr(expr);
+      // // return expr;
+
       Expr parse_precedence(
         final Precedence precedence,
       ) {
         final can_assign = precedence.index <= Precedence.ASSIGNMENT.index;
         advance();
-        final Expr? Function()? prefix_rule = () {
+        final Expr Function()? prefix_rule = () {
           switch (previous!.type) {
             case TokenType.IDENTIFIER:
               return () {
                 final name = previous!;
                 if (can_assign) {
                   if (match(TokenType.EQUAL)) {
-                    // ignore: unused_local_variable
-                    final expr = expression();
-                    compiler.visit_set_post(name);
-                    return ExprSet2(
-                      name: name,
-                      arg: expr,
+                    return compile_expr(
+                      ExprSet2(
+                        name: name,
+                        arg: expression(),
+                      ),
                     );
                   } else {
                     final expr = compiler.visit_getset<Expr>(
@@ -177,9 +241,10 @@ class _ParserImpl implements Parser, ErrorDelegate {
                     );
                   }
                 } else {
-                  compiler.visit_get_post(name);
-                  return ExprGet2(
-                    name: name,
+                  return compile_expr(
+                    ExprGet2(
+                      name: name,
+                    ),
                   );
                 }
               };
@@ -244,33 +309,32 @@ class _ParserImpl implements Parser, ErrorDelegate {
               return () {
                 final expr = parse_precedence(Precedence.UNARY);
                 compiler.visit_negate_post();
+                // TODO need tag.
                 return expr;
               };
             case TokenType.BANG:
               return () {
                 final expr = parse_precedence(Precedence.UNARY);
                 compiler.visit_not_post();
+                // TODO need tag.
                 return expr;
               };
             case TokenType.STRING:
-              return () {
-                final token = previous!;
-                compiler.visit_string_post(token.lexeme);
-                return ExprString(token: token);
-              };
+              return () => compile_expr(
+                ExprString(
+                  token: previous!,
+                ),
+              );
             case TokenType.NUMBER:
-              return () {
-                final token = previous;
-                compiler.visit_number_post(token!.lexeme);
-                return ExprNumber(
-                  value: token,
-                );
-              };
+              return () => compile_expr(
+                ExprNumber(
+                  value: previous!,
+                ),
+              );
             case TokenType.OBJECT:
-              return () {
-                compiler.visit_object_post();
-                return const ExprObject();
-              };
+              return () => compile_expr(
+                const ExprObject(),
+              );
             case TokenType.SUPER:
               return () {
                 consume(TokenType.DOT, "Expect '.' after 'super'");
@@ -288,194 +352,176 @@ class _ParserImpl implements Parser, ErrorDelegate {
                 );
                 return ExprSuperaccess(
                   kw: name_token,
-                  args: () {
-                    if (args == null) {
-                      return null;
-                    } else {
-                      return ArgumentList(
-                        args: args,
-                      );
-                    }
-                  }(),
+                  args: args,
                 );
               };
             case TokenType.THIS:
-              return () {
-                compiler.visit_self_post(previous!);
-                return const ExprSelf();
-              };
+              return () => compile_expr(
+                const ExprSelf(),
+              );
             case TokenType.FALSE:
-              return () {
-                compiler.visit_falsity_post();
-                return const ExprFalsity();
-              };
+              return () => compile_expr(
+                const ExprFalsity(),
+              );
             case TokenType.NIL:
-              return () {
-                compiler.visit_nil_post();
-                return const ExprNil();
-              };
+              return () => compile_expr(
+                const ExprNil(),
+              );
             case TokenType.TRUE:
-              return () {
-                compiler.visit_truth_post();
-                return const ExprTruth();
-              };
-            // ignore: no_default_cases
+              return () => compile_expr(
+                const ExprTruth(),
+              );
             default:
               return null;
           }
         }();
         if (prefix_rule == null) {
           error_at_previous('Expect expression');
-          return Expr();
+          return const ExprExpected();
         } else {
-          // ignore: unused_local_variable
-          final exprs = <Expr?>[];
-          final prefix_expr = prefix_rule();
-          exprs.add(prefix_expr);
-          while (precedence.index <= get_precedence(current!.type).index) {
-            advance();
-            // ignore: unused_local_variable
-            final infix_expr = () {
-              switch (previous!.type) {
-                case TokenType.LEFT_BRACK:
-                  return compiler.visit_bracket<Expr>(
-                    () => match(TokenType.COLON),
-                    () {
-                      if (match(TokenType.RIGHT_BRACK)) {
-                        return null;
-                      } else {
-                        final expr = expression();
-                        consume(TokenType.RIGHT_BRACK, "Expect ']' after list indexing");
-                        return expr;
-                      }
-                    },
-                    () {
-                      consume(TokenType.RIGHT_BRACK, "Expect ']' after list indexing");
-                      if (can_assign || match(TokenType.EQUAL)) {
-                        return expression();
-                      } else {
-                        return null;
-                      }
-                    },
-                    expression,
-                    (final f, final s) => ExprListGetter(
-                      first: f,
-                      second: s,
-                    ),
-                    (final f, final s) => ExprListSetter(
-                      first: f,
-                      second: s,
-                    ),
-                  );
-                case TokenType.LEFT_PAREN:
-                  final args = parse_argument_list(expression);
-                  compiler.visit_call_post(args.length);
-                  return ExprCall(
-                    args: ArgumentList(
-                      args: args,
-                    ),
-                  );
-                case TokenType.DOT:
-                  consume(TokenType.IDENTIFIER, "Expect property name after '.'");
-                  final name_token = previous!;
-                  if (can_assign && match(TokenType.EQUAL)) {
-                    final expr = expression();
-                    compiler.visit_set_prop_post(name_token);
-                    return ExprSet(
-                      arg: expr,
-                      name: name_token,
-                    );
-                  } else if (match(TokenType.LEFT_PAREN)) {
-                    final args = parse_argument_list(expression);
-                    compiler.visit_invoke_post(name_token, args.length);
-                    return ExprInvoke(
-                      args: ArgumentList(
-                        args: args,
-                      ),
-                      name: name_token,
-                    );
-                  } else {
-                    compiler.visit_dot_get_post(name_token);
-                    return ExprGet(
-                      name: name_token,
-                    );
-                  }
-                case TokenType.MINUS:
-                  final expr = parse_precedence(get_next_precedence(TokenType.MINUS));
-                  compiler.visit_subtract_post();
-                  return expr;
-                case TokenType.PLUS:
-                  final expr = parse_precedence(get_next_precedence(TokenType.PLUS));
-                  compiler.visit_add_post();
-                  return expr;
-                case TokenType.SLASH:
-                  final expr = parse_precedence(get_next_precedence(TokenType.SLASH));
-                  compiler.visit_divide_post();
-                  return expr;
-                case TokenType.STAR:
-                  final expr = parse_precedence(get_next_precedence(TokenType.STAR));
-                  compiler.visit_multiply_post();
-                  return expr;
-                case TokenType.CARET:
-                  final expr = parse_precedence(get_next_precedence(TokenType.CARET));
-                  compiler.visit_power_post();
-                  return expr;
-                case TokenType.PERCENT:
-                  final expr = parse_precedence(get_next_precedence(TokenType.PERCENT));
-                  compiler.visit_modulo_post();
-                  return expr;
-                case TokenType.BANG_EQUAL:
-                  final expr = parse_precedence(get_next_precedence(TokenType.BANG_EQUAL));
-                  compiler.visit_neq_post();
-                  return expr;
-                case TokenType.EQUAL_EQUAL:
-                  final expr = parse_precedence(get_next_precedence(TokenType.EQUAL_EQUAL));
-                  compiler.visit_eq_post();
-                  return expr;
-                case TokenType.GREATER:
-                  final expr = parse_precedence(get_next_precedence(TokenType.GREATER));
-                  compiler.visit_greater_post();
-                  return expr;
-                case TokenType.GREATER_EQUAL:
-                  final expr = parse_precedence(get_next_precedence(TokenType.GREATER_EQUAL));
-                  compiler.visit_geq_post();
-                  return expr;
-                case TokenType.LESS:
-                  final expr = parse_precedence(get_next_precedence(TokenType.LESS));
-                  compiler.visit_less_post();
-                  return expr;
-                case TokenType.LESS_EQUAL:
-                  final expr = parse_precedence(get_next_precedence(TokenType.LESS_EQUAL));
-                  compiler.visit_leq_post();
-                  return expr;
-                case TokenType.AND:
-                  return compiler.visit_and(
-                    () => parse_precedence(
-                      get_precedence(TokenType.AND),
-                    ),
-                  );
-                case TokenType.OR:
-                  return compiler.visit_or(
-                    () => parse_precedence(
-                      get_precedence(
-                        TokenType.OR,
-                      ),
-                    ),
-                  );
-                // ignore: no_default_cases
-                default:
-                  throw Exception("Invalid State");
-              }
-            }();
-            exprs.add(infix_expr);
-          }
-          if (can_assign) {
-            if (match(TokenType.EQUAL)) {
-              error_at_previous('Invalid assignment target');
-            }
-          }
           return ExprComposite(
-            exprs: exprs,
+            exprs: () {
+              final exprs = <Expr>[];
+              final prefix_expr = prefix_rule();
+              exprs.add(prefix_expr);
+              while (precedence.index <= get_precedence(current!.type).index) {
+                advance();
+                final infix_expr = () {
+                  switch (previous!.type) {
+                    case TokenType.LEFT_BRACK:
+                      return compiler.visit_bracket<Expr>(
+                        () => match(TokenType.COLON),
+                        () {
+                          if (match(TokenType.RIGHT_BRACK)) {
+                            return null;
+                          } else {
+                            final expr = expression();
+                            consume(TokenType.RIGHT_BRACK, "Expect ']' after list indexing");
+                            return expr;
+                          }
+                        },
+                        () {
+                          consume(TokenType.RIGHT_BRACK, "Expect ']' after list indexing");
+                          if (can_assign || match(TokenType.EQUAL)) {
+                            return expression();
+                          } else {
+                            return null;
+                          }
+                        },
+                        expression,
+                        (final f, final s) => ExprListGetter(
+                      first: f,
+                      second: s,
+                    ),
+                        (final f, final s) => ExprListSetter(
+                          first: f,
+                          second: s,
+                        ),
+                      );
+                    case TokenType.LEFT_PAREN:
+                      final args = parse_argument_list(expression);
+                      compiler.visit_call_post(args.length);
+                      return ExprCall(
+                        args: args,
+                      );
+                    case TokenType.DOT:
+                      consume(TokenType.IDENTIFIER, "Expect property name after '.'");
+                      final name_token = previous!;
+                      if (can_assign && match(TokenType.EQUAL)) {
+                        final expr = expression();
+                        compiler.visit_set_prop_post(name_token);
+                        return ExprSet(
+                          arg: expr,
+                          name: name_token,
+                        );
+                      } else if (match(TokenType.LEFT_PAREN)) {
+                        final args = parse_argument_list(expression);
+                        compiler.visit_invoke_post(name_token, args.length);
+                        return ExprInvoke(
+                          args: args,
+                          name: name_token,
+                        );
+                      } else {
+                        compiler.visit_dot_get_post(name_token);
+                        return ExprGet(
+                          name: name_token,
+                        );
+                      }
+                    case TokenType.MINUS:
+                      final expr = parse_precedence(get_next_precedence(TokenType.MINUS));
+                      compiler.visit_subtract_post();
+                      return expr;
+                    case TokenType.PLUS:
+                      final expr = parse_precedence(get_next_precedence(TokenType.PLUS));
+                      compiler.visit_add_post();
+                      return expr;
+                    case TokenType.SLASH:
+                      final expr = parse_precedence(get_next_precedence(TokenType.SLASH));
+                      compiler.visit_divide_post();
+                      return expr;
+                    case TokenType.STAR:
+                      final expr = parse_precedence(get_next_precedence(TokenType.STAR));
+                      compiler.visit_multiply_post();
+                      return expr;
+                    case TokenType.CARET:
+                      final expr = parse_precedence(get_next_precedence(TokenType.CARET));
+                      compiler.visit_power_post();
+                      return expr;
+                    case TokenType.PERCENT:
+                      final expr = parse_precedence(get_next_precedence(TokenType.PERCENT));
+                      compiler.visit_modulo_post();
+                      return expr;
+                    case TokenType.BANG_EQUAL:
+                      final expr = parse_precedence(get_next_precedence(TokenType.BANG_EQUAL));
+                      compiler.visit_neq_post();
+                      return expr;
+                    case TokenType.EQUAL_EQUAL:
+                      final expr = parse_precedence(get_next_precedence(TokenType.EQUAL_EQUAL));
+                      compiler.visit_eq_post();
+                      return expr;
+                    case TokenType.GREATER:
+                      final expr = parse_precedence(get_next_precedence(TokenType.GREATER));
+                      compiler.visit_greater_post();
+                      return expr;
+                    case TokenType.GREATER_EQUAL:
+                      final expr = parse_precedence(get_next_precedence(TokenType.GREATER_EQUAL));
+                      compiler.visit_geq_post();
+                      return expr;
+                    case TokenType.LESS:
+                      final expr = parse_precedence(get_next_precedence(TokenType.LESS));
+                      compiler.visit_less_post();
+                      return expr;
+                    case TokenType.LESS_EQUAL:
+                      final expr = parse_precedence(get_next_precedence(TokenType.LESS_EQUAL));
+                      compiler.visit_leq_post();
+                      return expr;
+                    case TokenType.AND:
+                      return compiler.visit_and(
+                            () => parse_precedence(
+                          get_precedence(TokenType.AND),
+                        ),
+                      );
+                    case TokenType.OR:
+                      return compiler.visit_or(
+                            () => parse_precedence(
+                          get_precedence(
+                            TokenType.OR,
+                          ),
+                        ),
+                      );
+                    default:
+                      throw Exception("Invalid State");
+                  }
+                }();
+                exprs.add(infix_expr);
+              }
+              if (can_assign) {
+                if (match(TokenType.EQUAL)) {
+                  error_at_previous('Invalid assignment target');
+                }
+              }
+              return exprs;
+            }(),
           );
         }
       }
@@ -796,7 +842,6 @@ class _ParserImpl implements Parser, ErrorDelegate {
             case TokenType.PRINT:
             case TokenType.RETURN:
               break outer;
-            // ignore: no_default_cases
             default:
               advance();
               continue outer;
@@ -826,8 +871,6 @@ abstract class Parser {
 }
 
 abstract class ErrorDelegate {
-  List<CompilerError> get errors;
-
   Debug get debug;
 
   void error_at_previous(

@@ -1,36 +1,14 @@
+import 'dart:collection';
 import 'dart:math';
 
 import 'package:sprintf/sprintf.dart';
 
-import '../compiler.dart'
-    show
-        Chunk,
-        CompilationResult,
-        LIST_NATIVE_FUNCTIONS,
-        MAP_NATIVE_FUNCTIONS,
-        NATIVE_CLASSES,
-        NATIVE_FUNCTIONS,
-        NATIVE_VALUES,
-        NativeClassCreator,
-        NativeError,
-        Nil,
-        ObjBoundMethod,
-        ObjClass,
-        ObjClosure,
-        ObjFunction,
-        ObjInstance,
-        ObjNative,
-        ObjNativeClass,
-        ObjUpvalue,
-        OpCode,
-        STRING_NATIVE_FUNCTIONS,
-        Table,
-        UINT8_COUNT;
 import '../models/errors.dart';
+import '../models/objfunction.dart';
+import '../models/op_code.dart';
 
-// TODO decouple vm from compiler.
 class VM {
-  static const INIT_STRING = 'init';
+  static const String INIT_STRING = 'init';
   final List<CallFrame?> frames = List<CallFrame?>.filled(FRAMES_MAX, null);
   final List<Object?> stack = List<Object?>.filled(STACK_MAX, null);
 
@@ -38,7 +16,7 @@ class VM {
   final List<RuntimeError> errors = [];
   final Table globals = Table();
   final Table strings = Table();
-  CompilationResult? compiler_result;
+  ObjFunction? compiled_function;
   int frame_count = 0;
   int stack_top = 0;
   ObjUpvalue? open_upvalues;
@@ -53,22 +31,22 @@ class VM {
   // Debug API
   bool trace_execution = false;
   bool step_code = false;
-  late Debug err_debug;
-  late Debug trace_debug;
-  late Debug stdout;
+  final Debug err_debug;
+  final Debug trace_debug;
+  final Debug stdout;
 
   VM({
     required final bool silent,
-  }) {
+  }) :
     err_debug = Debug(
       silent,
-    );
+    ),
     trace_debug = Debug(
       silent,
-    );
+    ),
     stdout = Debug(
       silent,
-    );
+    ) {
     _reset();
     for (var k = 0; k < frames.length; k++) {
       frames[k] = CallFrame();
@@ -137,20 +115,21 @@ class VM {
   }
 
   void set_function(
-    final CompilationResult compiler_result,
+    final ObjFunction function,
+    final List<CompilerError> errors,
     final FunctionParams params,
   ) {
     _reset();
     // Set compiler result
-    if (compiler_result.errors.isNotEmpty) {
+    if (errors.isNotEmpty) {
       throw Exception('Compiler result had errors');
     } else {
-      this.compiler_result = compiler_result;
+      this.compiled_function = function;
       // Set function
-      ObjFunction? fun = compiler_result.function;
+      ObjFunction? fun = function;
       if (params.function != null) {
         final found_fun = () {
-          for (final x in compiler_result.function.chunk.constants) {
+          for (final x in function.chunk.constants) {
             if (x is ObjFunction && x.name == params.function) {
               return x;
             }
@@ -1075,29 +1054,10 @@ class FunctionParams {
   });
 }
 
-class RuntimeError with LangError {
-  final RuntimeError? link;
-  @override
-  final int line;
-  @override
-  final String? msg;
-
-  const RuntimeError(
-    final this.line,
-    final this.msg, {
-    final this.link,
-  });
-
-  @override
-  String get type => "Runtime";
-
-  @override
-  Null get token => null;
-}
 bool values_equal(
-    final Object? a,
-    final Object? b,
-    ) {
+  final Object? a,
+  final Object? b,
+) {
   // TODO: confirm behavior (especially for deep equality).
   // Equality relied on this function, but not hashmap indexing
   // It might trigger strange cases where two equal lists don't have the same hashcode
@@ -1111,9 +1071,9 @@ bool values_equal(
 }
 
 bool _list_equals<T>(
-    final List<T>? a,
-    final List<T>? b,
-    ) {
+  final List<T>? a,
+  final List<T>? b,
+) {
   if (a == null) {
     return b == null;
   } else if (b == null || a.length != b.length) {
@@ -1131,9 +1091,9 @@ bool _list_equals<T>(
 }
 
 bool _map_equals<T, U>(
-    final Map<T, U>? a,
-    final Map<T, U>? b,
-    ) {
+  final Map<T, U>? a,
+  final Map<T, U>? b,
+) {
   if (a == null) {
     return b == null;
   } else if (b == null || a.length != b.length) {
@@ -1151,8 +1111,8 @@ bool _map_equals<T, U>(
 }
 
 int hash_string(
-    final String key,
-    ) {
+  final String key,
+) {
   int hash = 2166136261;
   for (int i = 0; i < key.length; i++) {
     hash ^= key.codeUnitAt(i);
@@ -1160,3 +1120,623 @@ int hash_string(
   }
   return hash;
 }
+
+// region native classes
+abstract class ObjNativeClass {
+  final String? name;
+  final Map<String?, Object?> properties;
+  final Map<String, Type>? properties_types;
+  final List<String> init_arg_keys;
+
+  ObjNativeClass({
+    required this.init_arg_keys,
+    this.name,
+    this.properties_types,
+    final List<Object?>? stack,
+    final int? arg_idx,
+    final int? arg_count,
+  }) : properties = {} {
+    if (arg_count != init_arg_keys.length) {
+      arg_count_error(init_arg_keys.length, arg_count);
+    }
+    for (int k = 0; k < init_arg_keys.length; k++) {
+      final expected = properties_types![init_arg_keys[k]];
+      if (expected != Object && stack![arg_idx! + k].runtimeType != expected) {
+        arg_type_error(0, expected, stack[arg_idx + k].runtimeType);
+      }
+      properties[init_arg_keys[k]] = stack![arg_idx! + k];
+    }
+  }
+
+  Object call(
+    final String? key,
+    final List<Object?> stack,
+    final int arg_idx,
+    final int arg_count,
+  ) {
+    throw NativeError('Undefined function $key');
+  }
+
+  void set_val(
+    final String? key,
+    final Object? value,
+  ) {
+    if (!properties_types!.containsKey(key)) {
+      throw NativeError('Undefined property $key');
+    } else if (value.runtimeType != properties_types![key!]) {
+      throw NativeError(
+        'Invalid object type, expected <%s>, but received <%s>',
+        [type_to_string(properties_types![key]), type_to_string(value.runtimeType)],
+      );
+    } else {
+      properties[key] = value;
+    }
+  }
+
+  Object get_val(
+    final String? key,
+  ) {
+    if (!properties.containsKey(key)) {
+      throw NativeError('Undefined property $key');
+    } else {
+      return properties[key] ?? Nil;
+    }
+  }
+
+  String string_expr({
+    final int max_chars,
+  });
+}
+
+class ListNode extends ObjNativeClass {
+  ListNode(
+    final List<Object?> stack,
+    final int arg_idx,
+    final int arg_count,
+  ) : super(
+          name: 'ListNode',
+          properties_types: {
+            'val': Object,
+            'next': ListNode,
+          },
+          init_arg_keys: [
+            'val',
+          ],
+          stack: stack,
+          arg_idx: arg_idx,
+          arg_count: arg_count,
+        );
+
+  Object? get val {
+    return properties['val'];
+  }
+
+  ListNode? get next {
+    return properties['next'] as ListNode?;
+  }
+
+  List<ListNode?> link_to_list({
+    final int max_length = 100,
+  }) {
+    // ignore: prefer_collection_literals
+    final visited = LinkedHashSet<ListNode?>();
+    ListNode? node = this;
+    while (node != null && !visited.contains(node) && visited.length <= max_length) {
+      visited.add(node);
+      node = node.next;
+    }
+    // Mark list as infinite
+    if (node == this) {
+      visited.add(null);
+    }
+    return visited.toList();
+  }
+
+  @override
+  String string_expr({
+    final int max_chars = 100,
+  }) {
+    final str = StringBuffer('[');
+    final list = link_to_list(
+      max_length: max_chars ~/ 2,
+    );
+    for (int k = 0; k < list.length; k++) {
+      final val = list[k]!.val;
+      if (k > 0) {
+        str.write(' → ');
+      }
+      str.write(
+        () {
+          if (val == null) {
+            return '⮐';
+          } else {
+            return value_to_string(
+              val,
+              max_chars: max_chars - str.length,
+            );
+          }
+        }(),
+      );
+      if (str.length > max_chars) {
+        str.write('...');
+        break;
+      }
+    }
+    str.write(']');
+    return str.toString();
+  }
+}
+
+typedef NativeClassCreator = ObjNativeClass Function(
+  List<Object?> stack,
+  int arg_idx,
+  int arg_count,
+);
+
+ListNode list_node(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  return ListNode(
+    stack,
+    arg_idx,
+    arg_count,
+  );
+}
+
+const Map<String, ObjNativeClass Function(List<Object>, int, int)> NATIVE_CLASSES =
+    <String, NativeClassCreator>{
+  'ListNode': list_node,
+};
+// endregion
+
+// region native
+class NativeError implements Exception {
+  String format;
+  List<Object?>? args;
+
+  NativeError(
+    final this.format, [
+    final this.args,
+  ]);
+}
+
+String type_to_string(
+  final Type? type,
+) {
+  if (type == double) {
+    return 'Number';
+  } else {
+    return type.toString();
+  }
+}
+
+void arg_count_error(
+  final int expected,
+  final int? received,
+) {
+  throw NativeError(
+    'Expected %d arguments, but got %d',
+    [expected, received],
+  );
+}
+
+void arg_type_error(
+  final int index,
+  final Type? expected,
+  final Type? received,
+) {
+  throw NativeError(
+    'Invalid argument %d type, expected <%s>, but received <%s>',
+    [
+      index + 1,
+      type_to_string(expected),
+      type_to_string(received),
+    ],
+  );
+}
+
+void assert_types(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+  final List<Type> types,
+) {
+  if (arg_count != types.length) {
+    arg_count_error(
+      types.length,
+      arg_count,
+    );
+  }
+  for (int k = 0; k < types.length; k++) {
+    if (types[k] != Object && stack[arg_idx + k].runtimeType != types[k]) {
+      arg_type_error(
+        0,
+        double,
+        stack[arg_idx + k] as Type?,
+      );
+    }
+  }
+}
+
+double assert1double(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  assert_types(
+    stack,
+    arg_idx,
+    arg_count,
+    <Type>[double],
+  );
+  return (stack[arg_idx] as double?)!;
+}
+
+void assert2doubles(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  assert_types(
+    stack,
+    arg_idx,
+    arg_count,
+    <Type>[double, double],
+  );
+}
+
+// Native functions
+
+double clock_native(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  if (arg_count != 0) {
+    arg_count_error(0, arg_count);
+  }
+  return DateTime.now().millisecondsSinceEpoch.toDouble();
+}
+
+double min_native(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  assert2doubles(stack, arg_idx, arg_count);
+  return min((stack[arg_idx] as double?)!, (stack[arg_idx + 1] as double?)!);
+}
+
+double max_native(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  assert2doubles(stack, arg_idx, arg_count);
+  return max(
+    (stack[arg_idx] as double?)!,
+    (stack[arg_idx + 1] as double?)!,
+  );
+}
+
+double floor_native(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  final arg_0 = assert1double(stack, arg_idx, arg_count);
+  return arg_0.floorToDouble();
+}
+
+double ceil_native(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  final arg_0 = assert1double(stack, arg_idx, arg_count);
+  return arg_0.ceilToDouble();
+}
+
+double abs_native(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  final arg_0 = assert1double(stack, arg_idx, arg_count);
+  return arg_0.abs();
+}
+
+double round_native(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  final arg_0 = assert1double(stack, arg_idx, arg_count);
+  return arg_0.roundToDouble();
+}
+
+double sqrt_native(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  final arg_0 = assert1double(stack, arg_idx, arg_count);
+  return sqrt(arg_0);
+}
+
+double sign_native(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  return assert1double(stack, arg_idx, arg_count).sign;
+}
+
+double exp_native(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  return exp(assert1double(stack, arg_idx, arg_count));
+}
+
+double log_native(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  return log(assert1double(stack, arg_idx, arg_count));
+}
+
+double sin_native(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  return sin(assert1double(stack, arg_idx, arg_count));
+}
+
+double asin_native(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  return asin(assert1double(stack, arg_idx, arg_count));
+}
+
+double cos_native(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  return cos(assert1double(stack, arg_idx, arg_count));
+}
+
+double acos_native(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  return acos(assert1double(stack, arg_idx, arg_count));
+}
+
+double tan_native(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  return tan(assert1double(stack, arg_idx, arg_count));
+}
+
+double atan_native(
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  return atan(assert1double(stack, arg_idx, arg_count));
+}
+
+// ignore: non_constant_identifier_names
+final NATIVE_FUNCTIONS = <ObjNative>[
+  ObjNative('clock', 0, clock_native),
+  ObjNative('min', 2, min_native),
+  ObjNative('max', 2, max_native),
+  ObjNative('floor', 1, floor_native),
+  ObjNative('ceil', 1, ceil_native),
+  ObjNative('abs', 1, abs_native),
+  ObjNative('round', 1, round_native),
+  ObjNative('sqrt', 1, sqrt_native),
+  ObjNative('sign', 1, sign_native),
+  ObjNative('exp', 1, exp_native),
+  ObjNative('log', 1, log_native),
+  ObjNative('sin', 1, sin_native),
+  ObjNative('asin', 1, asin_native),
+  ObjNative('cos', 1, cos_native),
+  ObjNative('acos', 1, acos_native),
+  ObjNative('tan', 1, tan_native),
+  ObjNative('atan', 1, atan_native),
+];
+
+const NATIVE_VALUES = <String, Object>{
+  'π': pi,
+  '𝘦': e,
+  '∞': double.infinity,
+};
+
+// List native functions
+double list_length(
+  final List<dynamic> list,
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  if (arg_count != 0) {
+    arg_count_error(0, arg_count);
+  }
+  return list.length.toDouble();
+}
+
+void list_add(
+  final List<dynamic> list,
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  if (arg_count != 1) {
+    arg_count_error(1, arg_count);
+  }
+  list.add(stack[arg_idx]);
+}
+
+void list_insert(
+  final List<dynamic> list,
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  assert_types(stack, arg_idx, arg_count, [double, Object]);
+  final idx = (stack[arg_idx] as double?)!.toInt();
+  if (idx < 0 || idx > list.length) {
+    throw NativeError('Index %d out of bounds [0, %d]', [idx, list.length]);
+  } else {
+    list.insert(idx, stack[arg_idx + 1]);
+  }
+}
+
+Object? list_remove(
+  final List<dynamic> list,
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  assert_types(stack, arg_idx, arg_count, [double]);
+  final idx = (stack[arg_idx] as double?)!.toInt();
+  if (idx < 0 || idx > list.length) {
+    throw NativeError('Index %d out of bounds [0, %d]', [idx, list.length]);
+  } else {
+    return list.removeAt(idx);
+  }
+}
+
+Object? list_pop(
+  final List<dynamic> list,
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  if (arg_count != 0) {
+    arg_count_error(0, arg_count);
+  }
+  return list.removeLast();
+}
+
+void list_clear(final List<dynamic> list, final List<Object?> stack, final int arg_idx, final int arg_count) {
+  if (arg_count != 0) {
+    arg_count_error(0, arg_count);
+  }
+  list.clear();
+}
+
+typedef ListNativeFunction = Object? Function(
+  List<dynamic> list,
+  List<Object?> stack,
+  int arg_idx,
+  int arg_count,
+);
+
+const LIST_NATIVE_FUNCTIONS = <String, ListNativeFunction>{
+  'length': list_length,
+  'add': list_add,
+  'insert': list_insert,
+  'remove': list_remove,
+  'pop': list_pop,
+  'clear': list_clear,
+};
+
+// Map native functions
+double map_length(
+  final Map<dynamic, dynamic> map,
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  if (arg_count != 0) {
+    arg_count_error(0, arg_count);
+  }
+  return map.length.toDouble();
+}
+
+List<dynamic> map_keys(
+  final Map<dynamic, dynamic> map,
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  if (arg_count != 0) {
+    arg_count_error(0, arg_count);
+  }
+  return map.keys.toList();
+}
+
+List<dynamic> map_values(
+  final Map<dynamic, dynamic> map,
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  if (arg_count != 0) arg_count_error(0, arg_count);
+  return map.values.toList();
+}
+
+bool map_has(
+  final Map<dynamic, dynamic> map,
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  if (arg_count != 1) {
+    arg_count_error(1, arg_count);
+  }
+  return map.containsKey(stack[arg_idx]);
+}
+
+typedef MapNativeFunction = Object Function(
+  Map<dynamic, dynamic> list,
+  List<Object?> stack,
+  int arg_idx,
+  int arg_count,
+);
+
+const MAP_NATIVE_FUNCTIONS = <String, MapNativeFunction>{
+  'length': map_length,
+  'keys': map_keys,
+  'values': map_values,
+  'has': map_has,
+};
+
+// String native functions
+double str_length(
+  final String str,
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
+  if (arg_count != 0) {
+    arg_count_error(0, arg_count);
+  }
+  return str.length.toDouble();
+}
+
+typedef StringNativeFunction = Object Function(
+  String list,
+  List<Object?> stack,
+  int arg_idx,
+  int arg_count,
+);
+
+const STRING_NATIVE_FUNCTIONS = <String, StringNativeFunction>{
+  'length': str_length,
+};
+// endregion

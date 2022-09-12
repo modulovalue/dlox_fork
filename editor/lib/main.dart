@@ -45,8 +45,8 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     runtime = Runtime(
-      on_compiler_result: (res) {
-        editorKey.currentState?.setCompilerResult(res);
+      on_compiler_result: (res, errors) {
+        editorKey.currentState?.setCompilerResult(res, errors);
       },
       on_interpreter_result: (res) {
         editorKey.currentState?.setInterpreterResult(res);
