@@ -384,11 +384,12 @@ class ExprSet2 implements Expr {
 }
 
 class ExprGetSet2 implements Expr {
-  final Expr? arg;
+  late final Expr? arg;
+  final Expr Function()? arg_maker;
   final NaturalToken name;
 
-  const ExprGetSet2({
-    required final this.arg,
+  ExprGetSet2({
+    required final this.arg_maker,
     required final this.name,
   });
 }
@@ -457,12 +458,13 @@ class ExprListSetter implements Expr {
 
 class ExprSuperaccess implements Expr {
   final NaturalToken kw;
-  final List<Expr>? args;
+  late final List<Expr>? args;
+  final List<Expr> Function()? make_args;
 
-  const ExprSuperaccess({
+  ExprSuperaccess({
     required final this.kw,
-    required final this.args,
-});
+    required final this.make_args,
+  });
 }
 
 class ExprTruth implements Expr {
@@ -474,7 +476,11 @@ class ExprFalsity implements Expr {
 }
 
 class ExprSelf implements Expr {
-  const ExprSelf();
+  final NaturalToken previous;
+
+  const ExprSelf({
+    required final this.previous,
+  });
 }
 
 class ExprComposite implements Expr {
@@ -538,18 +544,20 @@ class ExprStar implements Expr {
 }
 
 class ExprAnd implements Expr {
-  final Expr child;
+  final Expr Function() child_maker;
+  late final Expr child;
 
-  const ExprAnd({
-    required final this.child,
+  ExprAnd({
+    required final this.child_maker,
   });
 }
 
 class ExprOr implements Expr {
-  final Expr child;
+  final Expr Function() child_maker;
+  late final Expr child;
 
-  const ExprOr({
-    required final this.child,
+  ExprOr({
+    required final this.child_maker,
   });
 }
 
@@ -617,6 +625,54 @@ class ExprEq implements Expr {
   });
 }
 
+class ExprPluseq implements Expr {
+  final Expr child;
+
+  const ExprPluseq({
+    required final this.child,
+  });
+}
+
+class ExprMinuseq implements Expr {
+  final Expr child;
+
+  const ExprMinuseq({
+    required final this.child,
+  });
+}
+
+class ExprStareq implements Expr {
+  final Expr child;
+
+  const ExprStareq({
+    required final this.child,
+  });
+}
+
+class ExprSlasheq implements Expr {
+  final Expr child;
+
+  const ExprSlasheq({
+    required final this.child,
+  });
+}
+
+class ExprPoweq implements Expr {
+  final Expr child;
+
+  const ExprPoweq({
+    required final this.child,
+  });
+}
+
+class ExprModeq implements Expr {
+  final Expr child;
+
+  const ExprModeq({
+    required final this.child,
+  });
+}
+
 Z match_expr<Z>({
   required final Expr expr,
   required final Z Function(ExprMap) map,
@@ -656,6 +712,12 @@ Z match_expr<Z>({
   required final Z Function(ExprModulo) modulo,
   required final Z Function(ExprNeq) neq,
   required final Z Function(ExprEq) eq,
+  required final Z Function(ExprPluseq) pluseq,
+  required final Z Function(ExprMinuseq) minuseq,
+  required final Z Function(ExprStareq) stareq,
+  required final Z Function(ExprSlasheq) slasheq,
+  required final Z Function(ExprPoweq) poweq,
+  required final Z Function(ExprModeq) modeq,
 }) {
   if (expr is ExprMap) return map(expr);
   if (expr is ExprMap) return map(expr);
@@ -696,10 +758,17 @@ Z match_expr<Z>({
   if (expr is ExprModulo) return modulo(expr);
   if (expr is ExprNeq) return neq(expr);
   if (expr is ExprEq) return eq(expr);
+  if (expr is ExprPluseq) return pluseq(expr);
+  if (expr is ExprMinuseq) return minuseq(expr);
+  if (expr is ExprStareq) return stareq(expr);
+  if (expr is ExprSlasheq) return slasheq(expr);
+  if (expr is ExprPoweq) return poweq(expr);
+  if (expr is ExprModeq) return modeq(expr);
   throw Exception("Invalid State");
 }
 // endregion
 
+// region token
 abstract class SyntheticToken {
   TokenType get type;
 
@@ -915,8 +984,8 @@ class LocImpl implements Loc {
   final int line;
 
   const LocImpl(
-      final this.line,
-      );
+    final this.line,
+  );
 
   @override
   String toString() {
@@ -935,3 +1004,4 @@ class LocImpl implements Loc {
     return line.hashCode;
   }
 }
+// endregion

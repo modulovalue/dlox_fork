@@ -129,147 +129,8 @@ class _ParserImpl implements Parser, ErrorDelegate {
   Declaration parse_declaration({
     required final Compiler compiler,
   }) {
-    Expr compile_expr(
-      final Expr expr,
-    ) {
-      match_expr<void>(
-        expr: expr,
-        get2: (final a) => compiler.visit_get_post(a.name),
-        string: (final a) => compiler.visit_string_post(a.token.lexeme),
-        number: (final a) => compiler.visit_number_post(a.value.lexeme),
-        object: (final a) => compiler.visit_object_post(),
-        self: (final a) => compiler.visit_self_post(previous!),
-        nil: (final a) => compiler.visit_nil_post(),
-        falsity: (final a) => compiler.visit_falsity_post(),
-        truth: (final a) => compiler.visit_truth_post(),
-        get: (final a) => compiler.visit_dot_get_post(a.name),
-        set2: (final a) {
-          compile_expr(a.arg);
-          compiler.visit_set_post(a.name);
-        },
-        negated: (final a) {
-          compile_expr(a.child);
-          compiler.visit_negate_post();
-        },
-        not: (final a) {
-          compile_expr(a.child);
-          compiler.visit_not_post();
-        },
-        call: (final a) {
-          for (final x in a.args) {
-            compile_expr(x);
-          }
-          compiler.visit_call_post(a.args.length);
-        },
-        set: (final a) {
-          compile_expr(a.arg);
-          compiler.visit_set_prop_post(a.name);
-        },
-        invoke: (final a) {
-          for (final x in a.args) {
-            compile_expr(x);
-          }
-          compiler.visit_invoke_post(a.name, a.args.length);
-        },
-        map: (final a) {
-          for (final x in a.entries) {
-            compile_expr(x.key);
-            compile_expr(x.value);
-          }
-          compiler.visit_map_post(a.entries.length);
-        },
-        list: (final a) {
-          for (final x in a.values) {
-            compile_expr(x);
-          }
-          compiler.visit_list_init_post(a.val_count);
-        },
-        minus: (final a) {
-          compile_expr(a.child);
-          compiler.visit_subtract_post();
-        },
-        plus: (final a) {
-          compile_expr(a.child);
-          compiler.visit_add_post();
-        },
-        slash: (final a) {
-          compile_expr(a.child);
-          compiler.visit_divide_post();
-        },
-        star: (final a) {
-          compile_expr(a.child);
-          compiler.visit_multiply_post();
-        },
-        g: (final a) {
-          compile_expr(a.child);
-          compiler.visit_greater_post();
-        },
-        geq: (final a) {
-          compile_expr(a.child);
-          compiler.visit_geq_post();
-        },
-        l: (final a) {
-          compile_expr(a.child);
-          compiler.visit_less_post();
-        },
-        leq: (final a) {
-          compile_expr(a.child);
-          compiler.visit_leq_post();
-        },
-        pow: (final a) {
-          compile_expr(a.child);
-          compiler.visit_power_post();
-        },
-        modulo: (final a) {
-          compile_expr(a.child);
-          compiler.visit_modulo_post();
-        },
-        neq: (final a) {
-          compile_expr(a.child);
-          compiler.visit_neq_post();
-        },
-        eq: (final a) {
-          compile_expr(a.child);
-          compiler.visit_eq_post();
-        },
-        expected: (final a) => error_at_previous('Expect expression'),
-        and: (final a) {
-          // TODO
-        },
-        or: (final a) {
-          // TODO
-        },
-        getset2: (final a) {
-          // TODO
-        },
-        listgetter: (final a) {
-          // TODO
-        },
-        listsetter: (final a) {
-          // TODO
-        },
-        superaccess: (final a) {
-          // TODO
-        },
-        composite: (final a) {
-          // for (final x in a.exprs) {
-          //   compile_expr(x);
-          // }
-        },
-      );
-      return expr;
-    }
-    // Expr parse_expr(
-    //   final Precedence precedence,
-    // ) {
-    //   return const ExprExpected();
-    // }
-    //
-    // final expr = parse_expr(Precedence.ASSIGNMENT);
-    // compile_expr(expr);
-    // // return expr;
-
-    Expr expression() {
+    final _compile_expr = compiler.compile_expr;
+    Expr parse_expression() {
       Expr parse_precedence(
         final Precedence precedence,
       ) {
@@ -278,49 +139,51 @@ class _ParserImpl implements Parser, ErrorDelegate {
         final Expr? prefix_rule = () {
           switch (previous!.type) {
             case TokenType.LEFT_PAREN:
-              final expr = expression();
+              final expr = parse_expression();
               consume(TokenType.RIGHT_PAREN, "Expect ')' after expression");
               return expr;
             case TokenType.STRING:
-              return compile_expr(
+              return _compile_expr(
                 ExprString(
                   token: previous!,
                 ),
               );
             case TokenType.NUMBER:
-              return compile_expr(
+              return _compile_expr(
                 ExprNumber(
                   value: previous!,
                 ),
               );
             case TokenType.OBJECT:
-              return compile_expr(
+              return _compile_expr(
                 const ExprObject(),
               );
             case TokenType.THIS:
-              return compile_expr(
-                const ExprSelf(),
+              return _compile_expr(
+                ExprSelf(
+                  previous: previous!,
+                ),
               );
             case TokenType.FALSE:
-              return compile_expr(
+              return _compile_expr(
                 const ExprFalsity(),
               );
             case TokenType.NIL:
-              return compile_expr(
+              return _compile_expr(
                 const ExprNil(),
               );
             case TokenType.TRUE:
-              return compile_expr(
+              return _compile_expr(
                 const ExprTruth(),
               );
             case TokenType.MINUS:
-              return compile_expr(
+              return _compile_expr(
                 ExprNegated(
                   child: parse_precedence(Precedence.UNARY),
                 ),
               );
             case TokenType.BANG:
-              return compile_expr(
+              return _compile_expr(
                 ExprNot(
                   child: parse_precedence(Precedence.UNARY),
                 ),
@@ -330,42 +193,62 @@ class _ParserImpl implements Parser, ErrorDelegate {
               final name = previous!;
               if (can_assign) {
                 if (match(TokenType.EQUAL)) {
-                  return compile_expr(
+                  return _compile_expr(
                     ExprSet2(
                       name: name,
-                      arg: expression(),
+                      arg: parse_expression(),
                     ),
                   );
                 } else {
-                  // TODO inline
-                  // TODO call visit_getter1
-                  // TODO inline setter functionality
-                  final expr = compiler.visit_getset<Expr>(
-                    name,
-                    () {
-                      advance();
-                      advance();
-                      return expression();
-                    },
-                    (final first, final second) {
-                      if (!check(first)) {
-                        return false;
-                      } else if(current_idx >= tokens.length) {
-                        return false;
-                      } else if (tokens[current_idx].type != second) {
-                        return false;
-                      } else {
-                        return true;
-                      }
-                    },
-                  );
-                  return ExprGetSet2(
-                    name: name,
-                    arg: expr,
+                  return _compile_expr(
+                    ExprGetSet2(
+                      name: name,
+                      arg_maker: () {
+                        Expr expression() {
+                          advance();
+                          advance();
+                          return parse_expression();
+                        }
+
+                        bool match_pair(
+                          final TokenType first,
+                          final TokenType second,
+                        ) {
+                          if (check(first)) {
+                            if (current_idx >= tokens.length) {
+                              return false;
+                            } else if (tokens[current_idx].type != second) {
+                              return false;
+                            } else {
+                              return true;
+                            }
+                          } else {
+                            return false;
+                          }
+                        }
+
+                        // TODO try some late final trick until the cycle has been migrated.
+                        if (match_pair(TokenType.PLUS, TokenType.EQUAL)) {
+                          return () => ExprPluseq(child: expression());
+                        } else if (match_pair(TokenType.MINUS, TokenType.EQUAL)) {
+                          return () => ExprMinuseq(child: expression());
+                        } else if (match_pair(TokenType.STAR, TokenType.EQUAL)) {
+                          return () => ExprStareq(child: expression());
+                        } else if (match_pair(TokenType.SLASH, TokenType.EQUAL)) {
+                          return () => ExprSlasheq(child: expression());
+                        } else if (match_pair(TokenType.PERCENT, TokenType.EQUAL)) {
+                          return () => ExprModeq(child: expression());
+                        } else if (match_pair(TokenType.CARET, TokenType.EQUAL)) {
+                          return () => ExprPoweq(child: expression());
+                        } else {
+                          return null;
+                        }
+                      }(),
+                    ),
                   );
                 }
               } else {
-                return compile_expr(
+                return _compile_expr(
                   ExprGet2(
                     name: name,
                   ),
@@ -375,9 +258,9 @@ class _ParserImpl implements Parser, ErrorDelegate {
               final entries = <MapEntry<Expr, Expr>>[];
               if (!check(TokenType.RIGHT_BRACE)) {
                 for (;;) {
-                  final key = expression();
+                  final key = parse_expression();
                   consume(TokenType.COLON, "Expect ':' between map key-value pairs");
-                  final value = expression();
+                  final value = parse_expression();
                   entries.add(
                     MapEntry(
                       key,
@@ -392,7 +275,7 @@ class _ParserImpl implements Parser, ErrorDelegate {
                 }
               }
               consume(TokenType.RIGHT_BRACE, "Expect '}' after map initializer");
-              return compile_expr(
+              return _compile_expr(
                 ExprMap(
                   entries: entries,
                 ),
@@ -401,20 +284,20 @@ class _ParserImpl implements Parser, ErrorDelegate {
               int val_count = 0;
               final values = <Expr>[];
               if (!check(TokenType.RIGHT_BRACK)) {
-                values.add(expression());
+                values.add(parse_expression());
                 val_count += 1;
                 if (match(TokenType.COLON)) {
-                  values.add(expression());
+                  values.add(parse_expression());
                   val_count = -1;
                 } else {
                   while (match(TokenType.COMMA)) {
-                    values.add(expression());
+                    values.add(parse_expression());
                     val_count++;
                   }
                 }
               }
               consume(TokenType.RIGHT_BRACK, "Expect ']' after list initializer");
-              return compile_expr(
+              return _compile_expr(
                 ExprList(
                   values: values,
                   val_count: val_count,
@@ -424,30 +307,28 @@ class _ParserImpl implements Parser, ErrorDelegate {
               consume(TokenType.DOT, "Expect '.' after 'super'");
               consume(TokenType.IDENTIFIER, 'Expect superclass method name');
               final name_token = previous!;
-              final args = compiler.visit_super<Expr>(
-                name_token,
-                () {
-                  if (match(TokenType.LEFT_PAREN)) {
-                    return parse_argument_list(expression);
-                  } else {
-                    return null;
-                  }
-                },
-              );
-              return ExprSuperaccess(
-                kw: name_token,
-                args: args,
+              return _compile_expr(
+                ExprSuperaccess(
+                  kw: name_token,
+                  make_args: () {
+                    if (match(TokenType.LEFT_PAREN)) {
+                      return () => parse_argument_list(parse_expression);
+                    } else {
+                      return null;
+                    }
+                  }(),
+                ),
               );
             default:
               return null;
           }
         }();
         if (prefix_rule == null) {
-          return compile_expr(
+          return _compile_expr(
             const ExprExpected(),
           );
         } else {
-          return compile_expr(
+          return _compile_expr(
             ExprComposite(
               exprs: () {
                 final exprs = <Expr>[
@@ -460,156 +341,150 @@ class _ParserImpl implements Parser, ErrorDelegate {
                       switch (previous!.type) {
                         case TokenType.LEFT_BRACK:
                           return compiler.visit_bracket<Expr>(
-                                () => match(TokenType.COLON),
-                                () {
+                            () => match(TokenType.COLON),
+                            () {
                               if (match(TokenType.RIGHT_BRACK)) {
                                 return null;
                               } else {
-                                final expr = expression();
+                                final expr = parse_expression();
                                 consume(TokenType.RIGHT_BRACK, "Expect ']' after list indexing");
                                 return expr;
                               }
                             },
-                                () {
+                            () {
                               consume(TokenType.RIGHT_BRACK, "Expect ']' after list indexing");
                               if (can_assign || match(TokenType.EQUAL)) {
-                                return expression();
+                                return parse_expression();
                               } else {
                                 return null;
                               }
                             },
-                            expression,
-                                (final f, final s) => ExprListGetter(
+                            parse_expression,
+                            (final f, final s) => ExprListGetter(
                               first: f,
                               second: s,
                             ),
-                                (final f, final s) => ExprListSetter(
+                            (final f, final s) => ExprListSetter(
                               first: f,
                               second: s,
                             ),
                           );
                         case TokenType.LEFT_PAREN:
-                          return compile_expr(
+                          return _compile_expr(
                             ExprCall(
-                              args: parse_argument_list(expression),
+                              args: parse_argument_list(parse_expression),
                             ),
                           );
                         case TokenType.DOT:
                           consume(TokenType.IDENTIFIER, "Expect property name after '.'");
                           final name_token = previous!;
                           if (can_assign && match(TokenType.EQUAL)) {
-                            return compile_expr(
+                            return _compile_expr(
                               ExprSet(
                                 name: name_token,
-                                arg: expression(),
+                                arg: parse_expression(),
                               ),
                             );
                           } else if (match(TokenType.LEFT_PAREN)) {
-                            return compile_expr(
+                            return _compile_expr(
                               ExprInvoke(
                                 name: name_token,
-                                args: parse_argument_list(expression),
+                                args: parse_argument_list(parse_expression),
                               ),
                             );
                           } else {
-                            return compile_expr(
+                            return _compile_expr(
                               ExprGet(
                                 name: name_token,
                               ),
                             );
                           }
                         case TokenType.MINUS:
-                          return compile_expr(
+                          return _compile_expr(
                             ExprMinus(
                               child: parse_precedence(get_next_precedence(TokenType.MINUS)),
                             ),
                           );
                         case TokenType.PLUS:
-                          return compile_expr(
+                          return _compile_expr(
                             ExprPlus(
                               child: parse_precedence(get_next_precedence(TokenType.PLUS)),
                             ),
                           );
                         case TokenType.SLASH:
-                          return compile_expr(
+                          return _compile_expr(
                             ExprSlash(
                               child: parse_precedence(get_next_precedence(TokenType.SLASH)),
                             ),
                           );
                         case TokenType.STAR:
-                          return compile_expr(
+                          return _compile_expr(
                             ExprStar(
                               child: parse_precedence(get_next_precedence(TokenType.STAR)),
                             ),
                           );
                         case TokenType.CARET:
-                          return compile_expr(
+                          return _compile_expr(
                             ExprPow(
                               child: parse_precedence(get_next_precedence(TokenType.CARET)),
                             ),
                           );
                         case TokenType.PERCENT:
-                          return compile_expr(
+                          return _compile_expr(
                             ExprModulo(
                               child: parse_precedence(get_next_precedence(TokenType.PERCENT)),
                             ),
                           );
                         case TokenType.BANG_EQUAL:
-                          return compile_expr(
+                          return _compile_expr(
                             ExprNeq(
                               child: parse_precedence(get_next_precedence(TokenType.BANG_EQUAL)),
                             ),
                           );
                         case TokenType.EQUAL_EQUAL:
-                          return compile_expr(
+                          return _compile_expr(
                             ExprEq(
                               child: parse_precedence(get_next_precedence(TokenType.EQUAL_EQUAL)),
                             ),
                           );
                         case TokenType.GREATER:
-                          return compile_expr(
+                          return _compile_expr(
                             ExprG(
                               child: parse_precedence(get_next_precedence(TokenType.GREATER)),
                             ),
                           );
                         case TokenType.GREATER_EQUAL:
-                          return compile_expr(
+                          return _compile_expr(
                             ExprGeq(
                               child: parse_precedence(get_next_precedence(TokenType.GREATER_EQUAL)),
                             ),
                           );
                         case TokenType.LESS:
-                          return compile_expr(
+                          return _compile_expr(
                             ExprL(
                               child: parse_precedence(get_next_precedence(TokenType.LESS)),
                             ),
                           );
                         case TokenType.LESS_EQUAL:
-                          return compile_expr(
+                          return _compile_expr(
                             ExprLeq(
                               child: parse_precedence(get_next_precedence(TokenType.LESS_EQUAL)),
                             ),
                           );
                         case TokenType.AND:
-                        // TODO move to compile
-                          return compiler.visit_and(
-                                () => compile_expr(
-                              ExprAnd(
-                                child: parse_precedence(
-                                  get_precedence(TokenType.AND),
-                                ),
+                          return  _compile_expr(
+                            ExprAnd(
+                              child_maker: () => parse_precedence(
+                                get_precedence(TokenType.AND),
                               ),
                             ),
                           );
                         case TokenType.OR:
-                          // TODO move to compile
-                          return compiler.visit_or(
-                                () => compile_expr(
-                              ExprOr(
-                                child: parse_precedence(
-                                  get_precedence(
-                                    TokenType.OR,
-                                  ),
+                          return _compile_expr(
+                            ExprOr(
+                              child_maker: () => parse_precedence(
+                                get_precedence(
+                                  TokenType.OR,
                                 ),
                               ),
                             ),
@@ -631,8 +506,15 @@ class _ParserImpl implements Parser, ErrorDelegate {
           );
         }
       }
-
       return parse_precedence(Precedence.ASSIGNMENT);
+    }
+
+    Expr expression() {
+      // TODO parse expression
+      // TODO compile_expression
+      final expr =  parse_expression();
+      // return compile_expr(expr, compiler);
+      return expr;
     }
 
     DeclarationVari var_declaration() {

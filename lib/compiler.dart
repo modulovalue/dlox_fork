@@ -4,7 +4,6 @@ import 'models/objfunction.dart';
 import 'models/op_code.dart';
 import 'parser.dart';
 
-// region compiler
 ObjFunction run_dlox_compiler({
   required final List<NaturalToken> tokens,
   required final Debug debug,
@@ -463,20 +462,20 @@ mixin CompilerMixin implements Compiler {
   }
 
   @override
-  MapEntry<int, MapEntry<OpCode, OpCode>> visit_getter1(
+  MapEntry<int, OpCode> visit_getter_pre(
     final SyntheticToken name,
   ) {
     final data = get_or_set2(name);
     emit_byte(data.value.key.index);
     emit_byte(data.key);
-    return data;
+    return MapEntry(data.key, data.value.value);
   }
 
   @override
   void visit_get_post(
     final SyntheticToken name,
   ) {
-    visit_getter1(name);
+    visit_getter_pre(name);
   }
 
   @override
@@ -703,10 +702,8 @@ mixin CompilerMixin implements Compiler {
     emit_byte(length);
   }
 
-  @override
-  List<T>? visit_super<T>(
+  int visit_super_pre(
     final NaturalToken name_token,
-    final List<T>? Function() arg_count,
   ) {
     if (current_class == null) {
       error_delegate.error_at_previous("Can't use 'super' outside of a class");
@@ -714,33 +711,32 @@ mixin CompilerMixin implements Compiler {
       error_delegate.error_at_previous("Can't use 'super' in a class with no superclass");
     }
     final name = identifier_constant(name_token);
-    visit_getter1(
+    visit_getter_pre(
       const SyntheticTokenImpl(
         type: TokenType.IDENTIFIER,
         lexeme: 'this',
       ),
     );
-    final _args = arg_count();
-    // endregion
+    return name;
+  }
+  @override
+  List<T>? visit_super<T>(
+    final NaturalToken name_token,
+    final List<T>? Function() args,
+  ) {
+    final name = visit_super_pre(name_token);
+    final _args = args();
+    visit_getter_pre(
+      const SyntheticTokenImpl(
+        type: TokenType.IDENTIFIER,
+        lexeme: 'super',
+      ),
+    );
     if (_args != null) {
-      // region emitter
-      visit_getter1(
-        const SyntheticTokenImpl(
-          type: TokenType.IDENTIFIER,
-          lexeme: 'super',
-        ),
-      );
       emit_byte(OpCode.SUPER_INVOKE.index);
       emit_byte(name);
       emit_byte(_args.length);
-      // endregion
     } else {
-      visit_getter1(
-        const SyntheticTokenImpl(
-          type: TokenType.IDENTIFIER,
-          lexeme: 'super',
-        ),
-      );
       emit_byte(OpCode.GET_SUPER.index);
       emit_byte(name);
     }
@@ -828,7 +824,7 @@ mixin CompilerMixin implements Compiler {
         final superclass_name = superclass();
         if (superclass_name != null) {
           final class_name = current_class!.name!;
-          visit_getter1(superclass_name);
+          visit_getter_pre(superclass_name);
           if (class_name.lexeme == superclass_name.lexeme) {
             error_delegate.error_at_previous("A class can't inherit from itself");
           }
@@ -839,11 +835,11 @@ mixin CompilerMixin implements Compiler {
             ),
           );
           define_variable(0);
-          visit_getter1(class_name);
+          visit_getter_pre(class_name);
           emit_op(OpCode.INHERIT);
           current_class!.has_superclass = true;
         }
-        visit_getter1(class_name);
+        visit_getter_pre(class_name);
         final functions = methods(
           (final name, final make_block) {
             final constant = identifier_constant(name);
@@ -878,7 +874,7 @@ mixin CompilerMixin implements Compiler {
     if (current_class == null) {
       error_delegate.error_at_previous("Can't use 'this' outside of a class");
     } else {
-      visit_getter1(name);
+      visit_getter_pre(name);
     }
   }
 
@@ -922,62 +918,57 @@ mixin CompilerMixin implements Compiler {
   }
 
   @override
-  E? visit_getset<E>(
-    final NaturalToken name,
-    final E Function() expression,
-    final bool Function(
-      TokenType first,
-      TokenType second,
-    )
-        match_pair,
+  void visit_pluseq_post(
+    final MapEntry<int, OpCode> data,
   ) {
-    if (match_pair(TokenType.PLUS, TokenType.EQUAL)) {
-      final data = visit_getter1(name);
-      final expr = expression();
-      emit_op(OpCode.ADD);
-      emit_byte(data.value.value.index);
-      emit_byte(data.key);
-      return expr;
-    } else if (match_pair(TokenType.MINUS, TokenType.EQUAL)) {
-      final data = visit_getter1(name);
-      final expr = expression();
-      emit_op(OpCode.SUBTRACT);
-      emit_byte(data.value.value.index);
-      emit_byte(data.key);
-      return expr;
-    } else if (match_pair(TokenType.STAR, TokenType.EQUAL)) {
-      final data = visit_getter1(name);
-      final expr = expression();
-      emit_op(OpCode.MULTIPLY);
-      emit_byte(data.value.value.index);
-      emit_byte(data.key);
-      return expr;
-    } else if (match_pair(TokenType.SLASH, TokenType.EQUAL)) {
-      final data = visit_getter1(name);
-      final expr = expression();
-      emit_op(OpCode.DIVIDE);
-      emit_byte(data.value.value.index);
-      emit_byte(data.key);
-      return expr;
-    } else if (match_pair(TokenType.PERCENT, TokenType.EQUAL)) {
-      final data = visit_getter1(name);
-      final expr = expression();
-      emit_op(OpCode.MOD);
-      emit_byte(data.value.value.index);
-      emit_byte(data.key);
-      return expr;
-    } else if (match_pair(TokenType.CARET, TokenType.EQUAL)) {
-      final data = visit_getter1(name);
-      final expr = expression();
-      emit_op(OpCode.POW);
-      emit_byte(data.value.value.index);
-      emit_byte(data.key);
-      return expr;
-    } else {
-      visit_getter1(name);
-      // Ignore.
-      return null;
-    }
+    emit_op(OpCode.ADD);
+    emit_byte(data.value.index);
+    emit_byte(data.key);
+  }
+
+  @override
+  void visit_minuseq_post(
+    final MapEntry<int, OpCode> data,
+  ) {
+    emit_op(OpCode.SUBTRACT);
+    emit_byte(data.value.index);
+    emit_byte(data.key);
+  }
+
+  @override
+  void visit_stareq_post(
+    final MapEntry<int, OpCode> data,
+  ) {
+    emit_op(OpCode.MULTIPLY);
+    emit_byte(data.value.index);
+    emit_byte(data.key);
+  }
+
+  @override
+  void visit_slasheq_post(
+    final MapEntry<int, OpCode> data,
+  ) {
+    emit_op(OpCode.DIVIDE);
+    emit_byte(data.value.index);
+    emit_byte(data.key);
+  }
+
+  @override
+  void visit_percenteq_post(
+    final MapEntry<int, OpCode> data,
+  ) {
+    emit_op(OpCode.MOD);
+    emit_byte(data.value.index);
+    emit_byte(data.key);
+  }
+
+  @override
+  void visit_careteq_post(
+    final MapEntry<int, OpCode> data,
+  ) {
+    emit_op(OpCode.POW);
+    emit_byte(data.value.index);
+    emit_byte(data.key);
   }
 
   @override
@@ -1175,6 +1166,181 @@ mixin CompilerMixin implements Compiler {
   void pop() {
     emit_op(OpCode.POP);
   }
+
+  @override
+  Expr compile_expr(
+    final Expr expr,
+  ) {
+    final self = compile_expr;
+    match_expr<void>(
+      expr: expr,
+      get2: (final a) => visit_get_post(a.name),
+      string: (final a) => visit_string_post(a.token.lexeme),
+      number: (final a) => visit_number_post(a.value.lexeme),
+      object: (final a) => visit_object_post(),
+      self: (final a) => visit_self_post(a.previous),
+      nil: (final a) => visit_nil_post(),
+      falsity: (final a) => visit_falsity_post(),
+      truth: (final a) => visit_truth_post(),
+      get: (final a) => visit_dot_get_post(a.name),
+      set2: (final a) {
+        self(a.arg);
+        visit_set_post(a.name);
+      },
+      negated: (final a) {
+        self(a.child);
+        visit_negate_post();
+      },
+      not: (final a) {
+        self(a.child);
+        visit_not_post();
+      },
+      call: (final a) {
+        for (final x in a.args) {
+          self(x);
+        }
+        visit_call_post(a.args.length);
+      },
+      set: (final a) {
+        self(a.arg);
+        visit_set_prop_post(a.name);
+      },
+      invoke: (final a) {
+        for (final x in a.args) {
+          self(x);
+        }
+        visit_invoke_post(a.name, a.args.length);
+      },
+      map: (final a) {
+        for (final x in a.entries) {
+          self(x.key);
+          self(x.value);
+        }
+        visit_map_post(a.entries.length);
+      },
+      list: (final a) {
+        for (final x in a.values) {
+          self(x);
+        }
+        visit_list_init_post(a.val_count);
+      },
+      minus: (final a) {
+        self(a.child);
+        visit_subtract_post();
+      },
+      plus: (final a) {
+        self(a.child);
+        visit_add_post();
+      },
+      slash: (final a) {
+        self(a.child);
+        visit_divide_post();
+      },
+      star: (final a) {
+        self(a.child);
+        visit_multiply_post();
+      },
+      g: (final a) {
+        self(a.child);
+        visit_greater_post();
+      },
+      geq: (final a) {
+        self(a.child);
+        visit_geq_post();
+      },
+      l: (final a) {
+        self(a.child);
+        visit_less_post();
+      },
+      leq: (final a) {
+        self(a.child);
+        visit_leq_post();
+      },
+      pow: (final a) {
+        self(a.child);
+        visit_power_post();
+      },
+      modulo: (final a) {
+        self(a.child);
+        visit_modulo_post();
+      },
+      neq: (final a) {
+        self(a.child);
+        visit_neq_post();
+      },
+      eq: (final a) {
+        self(a.child);
+        visit_eq_post();
+      },
+      expected: (final a) => error_delegate.error_at_previous('Expect expression'),
+      getset2: (final a) {
+        final maker = a.arg_maker;
+        if (maker == null) {
+          visit_get_post(a.name);
+          a.arg = null;
+        } else {
+          final data = visit_getter_pre(a.name);
+          final expr = maker();
+          a.arg = expr;
+          // TODO self
+          if (expr is ExprPluseq) visit_pluseq_post(data);
+          if (expr is ExprMinuseq) visit_minuseq_post(data);
+          if (expr is ExprStareq) visit_stareq_post(data);
+          if (expr is ExprSlasheq) visit_slasheq_post(data);
+          if (expr is ExprPoweq) visit_careteq_post(data);
+          if (expr is ExprModeq) visit_percenteq_post(data);
+        }
+      },
+      pluseq: (final a) {},
+      minuseq: (final a) {},
+      stareq: (final a) {},
+      slasheq: (final a) {},
+      poweq: (final a) {},
+      modeq: (final a) {},
+      and: (final a) {
+        visit_and(
+              () {
+            // TODO self
+            final child = a.child_maker();
+            a.child = child;
+          },
+        );
+      },
+      or: (final a) {
+        visit_or(
+              () {
+            // TODO self
+            final child = a.child_maker();
+            a.child = child;
+          },
+        );
+      },
+      listgetter: (final a) {
+        // if (a.first != null) self(a.first!);
+        // if (a.second != null) self(a.second!);
+        // TODO
+      },
+      listsetter: (final a) {
+        // if (a.first != null) self(a.first!);
+        // if (a.second != null) self(a.second!);
+        // TODO
+      },
+      superaccess: (final a) {
+        // TODO self
+        final make = a.make_args;
+        visit_super<Expr>(
+          a.kw,
+          () => make?.call(),
+        );
+      },
+      composite: (final a) {
+        // for (final x in a.exprs) {
+        //   self(x);
+        // }
+      },
+    );
+    return expr;
+  }
 }
 
 abstract class Compiler {
@@ -1236,17 +1402,7 @@ abstract class Compiler {
 
   List<T>? visit_super<T>(
     final NaturalToken name_token,
-    final List<T>? Function() arg_count,
-  );
-
-  E? visit_getset<E>(
-    final NaturalToken name,
-    final E Function() expression,
-    final bool Function(
-      TokenType first,
-      TokenType second,
-    )
-        match_pair,
+    final List<T>? Function() args,
   );
 
   E visit_bracket<E extends Object>(
@@ -1287,6 +1443,29 @@ abstract class Compiler {
     final T Function() fn,
   );
 
+  void visit_pluseq_post(
+    final MapEntry<int, OpCode> data,
+  );
+
+  void visit_minuseq_post(
+    final MapEntry<int, OpCode> data,
+  );
+
+  void visit_stareq_post(
+    final MapEntry<int, OpCode> data,
+  );
+
+  void visit_slasheq_post(
+    final MapEntry<int, OpCode> data,
+  );
+
+  void visit_percenteq_post(
+    final MapEntry<int, OpCode> data,
+  );
+
+  void visit_careteq_post(
+    final MapEntry<int, OpCode> data,
+  );
   // endregion
 
   // region all post
@@ -1300,11 +1479,11 @@ abstract class Compiler {
     final SyntheticToken name,
   );
 
-  MapEntry<int, MapEntry<OpCode, OpCode>> visit_getter1(
+  void visit_get_post(
     final SyntheticToken name,
   );
 
-  void visit_get_post(
+  MapEntry<int, OpCode> visit_getter_pre(
     final SyntheticToken name,
   );
 
@@ -1384,6 +1563,10 @@ abstract class Compiler {
   // endregion
 
   void pop();
+
+  Expr compile_expr(
+    final Expr expr,
+  );
 }
 
 Local init_local(
@@ -1450,6 +1633,5 @@ class ClassCompiler {
     required final this.has_superclass,
   });
 }
-// endregion
 
 
