@@ -1,26 +1,25 @@
 import 'dart:async';
 import 'dart:math';
 
-import 'package:dlox/compiler.dart';
-import 'package:dlox/models/errors.dart';
-import 'package:dlox/models/objfunction.dart';
-import 'package:dlox/arrows/code_to_tokens.dart';
-import 'package:dlox/arrows/objfunction_to_output.dart';
+import 'package:dlox/domains/errors.dart';
+import 'package:dlox/domains/objfunction.dart';
+import 'package:dlox/arrows/code_to_objfunction.dart';
+import 'package:dlox/arrows/fundamental/objfunction_to_output.dart';
 import 'package:flutter/material.dart';
 
 class Runtime extends ChangeNotifier {
   // State hooks
   String source;
-  final Function(ObjFunction, List<LangError>) on_compiler_result;
+  final Function(DloxFunction, List<LangError>) on_compiler_result;
   final Function(InterpreterResult) on_interpreter_result;
 
   // Compiler timer
   Timer compile_timer;
 
   // Code variables
-  VM vm;
+  DloxVM vm;
   String compiled_source;
-  ObjFunction compiler_function;
+  DloxFunction compiler_function;
   List<LangError> compiler_errors;
   InterpreterResult interpreter_result;
   bool running = false;
@@ -40,7 +39,7 @@ class Runtime extends ChangeNotifier {
     this.on_compiler_result,
     this.on_interpreter_result,
   }) {
-    vm = VM(
+    vm = DloxVM(
       silent: true,
     );
     vm.trace_execution = true;
@@ -122,10 +121,8 @@ class Runtime extends ChangeNotifier {
       final debug = Debug(
         true,
       );
-      compiler_function = run_dlox_compiler(
-        tokens: run_lexer(
-          source: source,
-        ),
+      compiler_function = source_to_dlox(
+        source: source,
         debug: debug,
         trace_bytecode: true,
       );

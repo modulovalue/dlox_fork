@@ -1,10 +1,9 @@
 // TODO remove
-import 'package:sprintf/sprintf.dart';
+import 'package:sprintf/sprintf.dart' show sprintf;
 
-import '../arrows/objfunction_to_output.dart';
-import 'ast.dart';
+import '../arrows/fundamental/objfunction_to_output.dart';
 import 'objfunction.dart';
-import 'op_code.dart';
+import 'tokens.dart';
 
 // TODO have two classes of errors: runtime and compiler and make them independent from each other.
 // TODO  retuse tostring by calling a function not via inheritance.
@@ -91,8 +90,8 @@ class Debug {
   // TODO make silent named once editor is migrated to nnbd
   Debug(
     final this.silent,
-  ) : buf = StringBuffer(),
-      errors = [];
+  )   : buf = StringBuffer(),
+        errors = [];
 
   String clear() {
     final str = buf.toString();
@@ -129,7 +128,7 @@ class Debug {
   }
 
   void disassemble_chunk(
-    final Chunk chunk,
+    final DloxChunk chunk,
     final String name,
   ) {
     stdwrite("==" + name + "==\n");
@@ -142,7 +141,7 @@ class Debug {
 
   int constant_instruction(
     final String name,
-    final Chunk chunk,
+    final DloxChunk chunk,
     final int offset,
   ) {
     final constant = chunk.code[offset + 1];
@@ -154,7 +153,7 @@ class Debug {
 
   int initializer_list_instruction(
     final String name,
-    final Chunk chunk,
+    final DloxChunk chunk,
     final int offset,
   ) {
     final nArgs = chunk.code[offset + 1];
@@ -164,7 +163,7 @@ class Debug {
 
   int invoke_instruction(
     final String name,
-    final Chunk chunk,
+    final DloxChunk chunk,
     final int offset,
   ) {
     final constant = chunk.code[offset + 1];
@@ -179,13 +178,13 @@ class Debug {
     final String name,
     final int offset,
   ) {
-    stdwrite(sprintf('%s\n', [name]));
+    stdwrite(name + '\n');
     return offset + 1;
   }
 
   int byte_instruction(
     final String name,
-    final Chunk chunk,
+    final DloxChunk chunk,
     final int offset,
   ) {
     final slot = chunk.code[offset + 1];
@@ -196,7 +195,7 @@ class Debug {
   int jump_instruction(
     final String name,
     final int sign,
-    final Chunk chunk,
+    final DloxChunk chunk,
     final int offset,
   ) {
     int jump = chunk.code[offset + 1] << 8;
@@ -207,7 +206,7 @@ class Debug {
 
   int disassemble_instruction(
     final int? prevLine,
-    final Chunk chunk,
+    final DloxChunk chunk,
     int offset,
   ) {
     stdwrite(sprintf('%04d ', [offset]));
@@ -220,72 +219,72 @@ class Debug {
       stdwrite(sprintf('%4d ', [i]));
     }
     final instruction = chunk.code[offset];
-    switch (OpCode.values[instruction]) {
-      case OpCode.CONSTANT:
+    switch (DloxOpCode.values[instruction]) {
+      case DloxOpCode.CONSTANT:
         return constant_instruction('OP_CONSTANT', chunk, offset);
-      case OpCode.NIL:
+      case DloxOpCode.NIL:
         return simple_instruction('OP_NIL', offset);
-      case OpCode.TRUE:
+      case DloxOpCode.TRUE:
         return simple_instruction('OP_TRUE', offset);
-      case OpCode.FALSE:
+      case DloxOpCode.FALSE:
         return simple_instruction('OP_FALSE', offset);
-      case OpCode.POP:
+      case DloxOpCode.POP:
         return simple_instruction('OP_POP', offset);
-      case OpCode.GET_LOCAL:
+      case DloxOpCode.GET_LOCAL:
         return byte_instruction('OP_GET_LOCAL', chunk, offset);
-      case OpCode.SET_LOCAL:
+      case DloxOpCode.SET_LOCAL:
         return byte_instruction('OP_SET_LOCAL', chunk, offset);
-      case OpCode.GET_GLOBAL:
+      case DloxOpCode.GET_GLOBAL:
         return constant_instruction('OP_GET_GLOBAL', chunk, offset);
-      case OpCode.DEFINE_GLOBAL:
+      case DloxOpCode.DEFINE_GLOBAL:
         return constant_instruction('OP_DEFINE_GLOBAL', chunk, offset);
-      case OpCode.SET_GLOBAL:
+      case DloxOpCode.SET_GLOBAL:
         return constant_instruction('OP_SET_GLOBAL', chunk, offset);
-      case OpCode.GET_UPVALUE:
+      case DloxOpCode.GET_UPVALUE:
         return byte_instruction('OP_GET_UPVALUE', chunk, offset);
-      case OpCode.SET_UPVALUE:
+      case DloxOpCode.SET_UPVALUE:
         return byte_instruction('OP_SET_UPVALUE', chunk, offset);
-      case OpCode.GET_PROPERTY:
+      case DloxOpCode.GET_PROPERTY:
         return constant_instruction('OP_GET_PROPERTY', chunk, offset);
-      case OpCode.SET_PROPERTY:
+      case DloxOpCode.SET_PROPERTY:
         return constant_instruction('OP_SET_PROPERTY', chunk, offset);
-      case OpCode.GET_SUPER:
+      case DloxOpCode.GET_SUPER:
         return constant_instruction('OP_GET_SUPER', chunk, offset);
-      case OpCode.EQUAL:
+      case DloxOpCode.EQUAL:
         return simple_instruction('OP_EQUAL', offset);
-      case OpCode.GREATER:
+      case DloxOpCode.GREATER:
         return simple_instruction('OP_GREATER', offset);
-      case OpCode.LESS:
+      case DloxOpCode.LESS:
         return simple_instruction('OP_LESS', offset);
-      case OpCode.ADD:
+      case DloxOpCode.ADD:
         return simple_instruction('OP_ADD', offset);
-      case OpCode.SUBTRACT:
+      case DloxOpCode.SUBTRACT:
         return simple_instruction('OP_SUBTRACT', offset);
-      case OpCode.MULTIPLY:
+      case DloxOpCode.MULTIPLY:
         return simple_instruction('OP_MULTIPLY', offset);
-      case OpCode.DIVIDE:
+      case DloxOpCode.DIVIDE:
         return simple_instruction('OP_DIVIDE', offset);
-      case OpCode.POW:
+      case DloxOpCode.POW:
         return simple_instruction('OP_POW', offset);
-      case OpCode.NOT:
+      case DloxOpCode.NOT:
         return simple_instruction('OP_NOT', offset);
-      case OpCode.NEGATE:
+      case DloxOpCode.NEGATE:
         return simple_instruction('OP_NEGATE', offset);
-      case OpCode.PRINT:
+      case DloxOpCode.PRINT:
         return simple_instruction('OP_PRINT', offset);
-      case OpCode.JUMP:
+      case DloxOpCode.JUMP:
         return jump_instruction('OP_JUMP', 1, chunk, offset);
-      case OpCode.JUMP_IF_FALSE:
+      case DloxOpCode.JUMP_IF_FALSE:
         return jump_instruction('OP_JUMP_IF_FALSE', 1, chunk, offset);
-      case OpCode.LOOP:
+      case DloxOpCode.LOOP:
         return jump_instruction('OP_LOOP', -1, chunk, offset);
-      case OpCode.CALL:
+      case DloxOpCode.CALL:
         return byte_instruction('OP_CALL', chunk, offset);
-      case OpCode.INVOKE:
+      case DloxOpCode.INVOKE:
         return invoke_instruction('OP_INVOKE', chunk, offset);
-      case OpCode.SUPER_INVOKE:
+      case DloxOpCode.SUPER_INVOKE:
         return invoke_instruction('OP_SUPER_INVOKE', chunk, offset);
-      case OpCode.CLOSURE:
+      case DloxOpCode.CLOSURE:
         // ignore: parameter_assignments
         offset++;
         // ignore: parameter_assignments
@@ -293,7 +292,7 @@ class Debug {
         stdwrite(sprintf('%-16s %4d ', ['OP_CLOSURE', constant]));
         print_value(chunk.constants[constant]);
         stdwrite('\n');
-        final function = (chunk.constants[constant] as ObjFunction?)!;
+        final function = (chunk.constants[constant] as DloxFunction?)!;
         for (var j = 0; j < function.upvalue_count; j++) {
           // ignore: parameter_assignments
           final isLocal = chunk.code[offset++] == 1;
@@ -302,36 +301,46 @@ class Debug {
           stdwrite(
             sprintf(
               '%04d      |                     %s %d\n',
-              [offset - 2, isLocal ? 'local' : 'upvalue', index],
+              [
+                offset - 2,
+                () {
+                  if (isLocal) {
+                    return 'local';
+                  } else {
+                    return 'upvalue';
+                  }
+                }(),
+                index,
+              ],
             ),
           );
         }
         return offset;
-      case OpCode.CLOSE_UPVALUE:
+      case DloxOpCode.CLOSE_UPVALUE:
         return simple_instruction('OP_CLOSE_UPVALUE', offset);
-      case OpCode.RETURN:
+      case DloxOpCode.RETURN:
         return simple_instruction('OP_RETURN', offset);
-      case OpCode.CLASS:
+      case DloxOpCode.CLASS:
         return constant_instruction('OP_CLASS', chunk, offset);
-      case OpCode.INHERIT:
+      case DloxOpCode.INHERIT:
         return simple_instruction('OP_INHERIT', offset);
-      case OpCode.METHOD:
+      case DloxOpCode.METHOD:
         return constant_instruction('OP_METHOD', chunk, offset);
-      case OpCode.LIST_INIT:
+      case DloxOpCode.LIST_INIT:
         return initializer_list_instruction('OP_LIST_INIT', chunk, offset);
-      case OpCode.LIST_INIT_RANGE:
+      case DloxOpCode.LIST_INIT_RANGE:
         return simple_instruction('LIST_INIT_RANGE', offset);
-      case OpCode.MAP_INIT:
+      case DloxOpCode.MAP_INIT:
         return initializer_list_instruction('OP_MAP_INIT', chunk, offset);
-      case OpCode.CONTAINER_GET:
+      case DloxOpCode.CONTAINER_GET:
         return simple_instruction('OP_CONTAINER_GET', offset);
-      case OpCode.CONTAINER_SET:
+      case DloxOpCode.CONTAINER_SET:
         return simple_instruction('OP_CONTAINER_SET', offset);
-      case OpCode.CONTAINER_GET_RANGE:
+      case DloxOpCode.CONTAINER_GET_RANGE:
         return simple_instruction('CONTAINER_GET_RANGE', offset);
-      case OpCode.CONTAINER_ITERATE:
+      case DloxOpCode.CONTAINER_ITERATE:
         return simple_instruction('CONTAINER_ITERATE', offset);
-      case OpCode.MOD:
+      case DloxOpCode.MOD:
         throw Exception('Unknown opcode $instruction');
     }
   }
@@ -344,7 +353,7 @@ String? value_to_string(
 }) {
   if (value is bool) {
     return value ? 'true' : 'false';
-  } else if (value == Nil) {
+  } else if (value == DloxNil) {
     return 'nil';
   } else if (value is double) {
     if (value.isInfinite) {
@@ -354,7 +363,11 @@ String? value_to_string(
     }
     return sprintf('%g', [value]);
   } else if (value is String) {
-    return value.trim().isEmpty && quoteEmpty ? '\'$value\'' : value;
+    if (value.trim().isEmpty && quoteEmpty) {
+      return '\'$value\'';
+    } else {
+      return value;
+    }
   } else if (value is List) {
     return list_to_string(value, maxChars: max_chars);
   } else if (value is Map) {
@@ -404,30 +417,24 @@ String map_to_string(
   return buf.toString();
 }
 
-void print_object(
-  final Object value,
-) {
-  print(object_to_string(value));
-}
-
 String? object_to_string(
   final Object? value, {
   final int maxChars = 100,
 }) {
-  if (value is ObjClass) {
+  if (value is DloxClass) {
     return value.name;
-  } else if (value is ObjBoundMethod) {
+  } else if (value is DloxBoundMethod) {
     return function_to_string(value.method.function);
-  } else if (value is ObjClosure) {
+  } else if (value is DloxClosure) {
     return function_to_string(value.function);
-  } else if (value is ObjFunction) {
+  } else if (value is DloxFunction) {
     return function_to_string(value);
-  } else if (value is ObjInstance) {
+  } else if (value is DloxInstance) {
     return '${value.klass!.name} instance';
     // return instanceToString(value, maxChars: maxChars);
-  } else if (value is ObjNative) {
+  } else if (value is DloxNative) {
     return '<native fn>';
-  } else if (value is ObjUpvalue) {
+  } else if (value is DloxUpvalue) {
     return 'upvalue';
   } else if (value is ObjNativeClass) {
     return value.string_expr(max_chars: maxChars);
@@ -438,7 +445,7 @@ String? object_to_string(
 }
 
 String function_to_string(
-  final ObjFunction function,
+  final DloxFunction function,
 ) {
   if (function.name == null) {
     return '<script>';

@@ -1,24 +1,11 @@
 // ignore_for_file: no_default_cases
 
-import 'compiler.dart';
-import 'models/ast.dart';
-import 'models/errors.dart';
+import '../../domains/ast.dart';
+import '../../domains/errors.dart';
+import '../../domains/tokens.dart';
 
-MapEntry<Parser, ErrorDelegate> make_parser({
-  required final List<Token> tokens,
-  required final Debug debug,
-}) {
-  final parser = _ParserImpl(
-    tokens: tokens,
-    debug: debug,
-  );
-  return MapEntry(
-    parser,
-    parser,
-  );
-}
-
-class _ParserImpl implements Parser, ErrorDelegate {
+// TODO hide parser
+class DloxParserImpl implements DloxParser, DloxErrorDelegate {
   final List<Token> tokens;
   @override
   final Debug debug;
@@ -27,7 +14,7 @@ class _ParserImpl implements Parser, ErrorDelegate {
   int current_idx;
   bool panic_mode;
 
-  _ParserImpl({
+  DloxParserImpl({
     required final this.tokens,
     required final this.debug,
   })  : current_idx = 0,
@@ -56,6 +43,7 @@ class _ParserImpl implements Parser, ErrorDelegate {
     }
   }
 
+  // region infrastructure
   void advance() {
     previous = current;
     while (current_idx < tokens.length) {
@@ -96,6 +84,8 @@ class _ParserImpl implements Parser, ErrorDelegate {
     }
   }
 
+  // endregion
+
   Expr parse_expression() {
     final self = parse_expression;
     List<Expr> parse_argument_list() {
@@ -113,9 +103,9 @@ class _ParserImpl implements Parser, ErrorDelegate {
     }
 
     Expr parse_precedence(
-      final Precedence precedence,
+      final DloxPrecedence precedence,
     ) {
-      final can_assign = precedence.index <= Precedence.ASSIGNMENT.index;
+      final can_assign = precedence.index <= DloxPrecedence.ASSIGNMENT.index;
       advance();
       final Expr? prefix_rule = () {
         switch (previous!.type) {
@@ -157,12 +147,12 @@ class _ParserImpl implements Parser, ErrorDelegate {
             );
           case TokenType.MINUS:
             return ExprNegated(
-              child: parse_precedence(Precedence.UNARY),
+              child: parse_precedence(DloxPrecedence.UNARY),
               line: previous_line,
             );
           case TokenType.BANG:
             return ExprNot(
-              child: parse_precedence(Precedence.UNARY),
+              child: parse_precedence(DloxPrecedence.UNARY),
               line: previous_line,
             );
           case TokenType.IDENTIFIER:
@@ -177,7 +167,7 @@ class _ParserImpl implements Parser, ErrorDelegate {
               } else {
                 return ExprGetSet2(
                   name: name,
-                  child: (){
+                  child: () {
                     bool match_pair(
                       final TokenType first,
                       final TokenType second,
@@ -487,7 +477,7 @@ class _ParserImpl implements Parser, ErrorDelegate {
       }
     }
 
-    return parse_precedence(Precedence.ASSIGNMENT);
+    return parse_precedence(DloxPrecedence.ASSIGNMENT);
   }
 
   DeclarationVari parse_var_declaration() {
@@ -601,13 +591,13 @@ class _ParserImpl implements Parser, ErrorDelegate {
         if_kw: if_kw,
         line: line,
         else_kw: else_kw,
-        other_maker: () {
+        other: () {
           if (match(TokenType.ELSE)) {
             return parse_statement();
           } else {
             return null;
           }
-        },
+        }(),
       );
     } else if (match(TokenType.WHILE)) {
       return StmtWhil(
@@ -618,7 +608,7 @@ class _ParserImpl implements Parser, ErrorDelegate {
       );
     } else if (match(TokenType.LEFT_BRACE)) {
       return StmtBlock(
-        block_maker: parse_decls,
+        block: parse_decls().toList(),
         line: previous_line,
       );
     } else if (match(TokenType.PRINT)) {
@@ -681,21 +671,17 @@ class _ParserImpl implements Parser, ErrorDelegate {
         consume(TokenType.LEFT_BRACE, 'Expect function body');
         return args;
       }(),
-      make_decls: (final new_compiler) => parse_decls(new_compiler).toList(),
+      decls: parse_decls().toList(),
     );
   }
 
-  Iterable<Declaration> parse_decls(
-    final Compiler compiler,
-  ) sync* {
+  Iterable<Declaration> parse_decls() sync* {
     for (;;) {
       if (!check(TokenType.RIGHT_BRACE)) {
         if (match(TokenType.EOF)) {
           break;
         } else {
-          yield parse_declaration(
-            compiler: compiler,
-          );
+          yield parse_declaration();
         }
       } else {
         break;
@@ -704,9 +690,7 @@ class _ParserImpl implements Parser, ErrorDelegate {
     consume(TokenType.RIGHT_BRACE, 'Unterminated block');
   }
 
-  Declaration parse_decl(
-    final Compiler compiler,
-  ) {
+  Declaration parse_decl() {
     if (match(TokenType.CLASS)) {
       consume(TokenType.IDENTIFIER, 'Expect class name');
       return DeclarationClazz(
@@ -719,7 +703,7 @@ class _ParserImpl implements Parser, ErrorDelegate {
             return null;
           }
         }(),
-        make_functions: (final compiler) {
+        functions: () {
           consume(TokenType.LEFT_BRACE, 'Expect class body');
           final methods = <Method>[];
           for (;;) {
@@ -736,34 +720,19 @@ class _ParserImpl implements Parser, ErrorDelegate {
                 block: functiony,
                 line: previous_line,
               );
-              compiler.visit_method(method);
               methods.add(method);
             }
           }
-          // TODO why can't i do this instead of above.
-          // for (final method in methods) {
-          //   compiler.visit_method(method);
-          // }
           consume(TokenType.RIGHT_BRACE, 'Unterminated class body');
           return methods;
-        },
+        }(),
         line: previous_line,
       );
     } else if (match(TokenType.FUN)) {
       consume(TokenType.IDENTIFIER, 'Expect function name');
       return DeclarationFun(
         name: previous!,
-        make_block: (final compiler) {
-          final functiony = parse_function_block();
-          compiler.visit_fn(
-            FunctionType.FUNCTION,
-            functiony,
-            previous_line,
-          );
-          return Block(
-            decls: functiony.decls,
-          );
-        },
+        block: parse_function_block(),
         line: previous_line,
       );
     } else if (match(TokenType.VAR)) {
@@ -775,30 +744,21 @@ class _ParserImpl implements Parser, ErrorDelegate {
     }
   }
 
-  Declaration parse_declaration({
-    required final Compiler compiler,
-  }) {
-    final decl = parse_decl(compiler);
-    // TODO why can't I compile after synchronization?
-    compiler.compile_declaration(decl);
+  Declaration parse_declaration() {
+    final decl = parse_decl();
     synchronize();
     return decl;
   }
 
-  // TODO remove ast late fields once all split properly
   @override
-  CompilationUnit parse_compilation_unit({
-    required final Compiler compiler,
-  }) {
+  CompilationUnit parse_compilation_unit() {
     return CompilationUnit(
       decls: () sync* {
         for (;;) {
           if (match(TokenType.EOF)) {
             break;
           } else {
-            yield parse_declaration(
-              compiler: compiler,
-            );
+            yield parse_declaration();
           }
         }
       }()
@@ -832,17 +792,21 @@ class _ParserImpl implements Parser, ErrorDelegate {
       }
     }
   }
+
+  @override
+  void restore() {
+    panic_mode = false;
+    // TODO: implement restore
+  }
 }
 
-abstract class Parser {
+abstract class DloxParser {
   int get previous_line;
 
-  CompilationUnit parse_compilation_unit({
-    required final Compiler compiler,
-  });
+  CompilationUnit parse_compilation_unit();
 }
 
-abstract class ErrorDelegate {
+abstract class DloxErrorDelegate {
   Debug get debug;
 
   // TODO replace token with line?
@@ -850,9 +814,11 @@ abstract class ErrorDelegate {
     final Token token,
     final String message,
   );
+
+  void restore();
 }
 
-enum Precedence {
+enum DloxPrecedence {
   NONE,
   ASSIGNMENT, // =
   OR, // or
@@ -867,140 +833,140 @@ enum Precedence {
   PRIMARY,
 }
 
-Precedence get_precedence(
+DloxPrecedence get_precedence(
   final TokenType type,
 ) {
   switch (type) {
     case TokenType.LEFT_PAREN:
-      return Precedence.CALL;
+      return DloxPrecedence.CALL;
     case TokenType.RIGHT_PAREN:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.LEFT_BRACE:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.RIGHT_BRACE:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.LEFT_BRACK:
-      return Precedence.CALL;
+      return DloxPrecedence.CALL;
     case TokenType.RIGHT_BRACK:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.COMMA:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.DOT:
-      return Precedence.CALL;
+      return DloxPrecedence.CALL;
     case TokenType.MINUS:
-      return Precedence.TERM;
+      return DloxPrecedence.TERM;
     case TokenType.PLUS:
-      return Precedence.TERM;
+      return DloxPrecedence.TERM;
     case TokenType.SEMICOLON:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.SLASH:
-      return Precedence.FACTOR;
+      return DloxPrecedence.FACTOR;
     case TokenType.STAR:
-      return Precedence.FACTOR;
+      return DloxPrecedence.FACTOR;
     case TokenType.CARET:
-      return Precedence.POWER;
+      return DloxPrecedence.POWER;
     case TokenType.PERCENT:
-      return Precedence.FACTOR;
+      return DloxPrecedence.FACTOR;
     case TokenType.COLON:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.BANG:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.BANG_EQUAL:
-      return Precedence.EQUALITY;
+      return DloxPrecedence.EQUALITY;
     case TokenType.EQUAL:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.EQUAL_EQUAL:
-      return Precedence.EQUALITY;
+      return DloxPrecedence.EQUALITY;
     case TokenType.GREATER:
-      return Precedence.COMPARISON;
+      return DloxPrecedence.COMPARISON;
     case TokenType.GREATER_EQUAL:
-      return Precedence.COMPARISON;
+      return DloxPrecedence.COMPARISON;
     case TokenType.LESS:
-      return Precedence.COMPARISON;
+      return DloxPrecedence.COMPARISON;
     case TokenType.LESS_EQUAL:
-      return Precedence.COMPARISON;
+      return DloxPrecedence.COMPARISON;
     case TokenType.IDENTIFIER:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.STRING:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.NUMBER:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.OBJECT:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.AND:
-      return Precedence.AND;
+      return DloxPrecedence.AND;
     case TokenType.CLASS:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.ELSE:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.FALSE:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.FOR:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.FUN:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.IF:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.NIL:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.OR:
-      return Precedence.OR;
+      return DloxPrecedence.OR;
     case TokenType.PRINT:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.RETURN:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.SUPER:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.THIS:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.TRUE:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.VAR:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.WHILE:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.BREAK:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.CONTINUE:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.ERROR:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.EOF:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.IN:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
     case TokenType.COMMENT:
-      return Precedence.NONE;
+      return DloxPrecedence.NONE;
   }
 }
 
-Precedence get_next_precedence(
+DloxPrecedence get_next_precedence(
   final TokenType type,
 ) {
   switch (get_precedence(type)) {
-    case Precedence.NONE:
-      return Precedence.ASSIGNMENT;
-    case Precedence.ASSIGNMENT:
-      return Precedence.OR;
-    case Precedence.OR:
-      return Precedence.AND;
-    case Precedence.AND:
-      return Precedence.EQUALITY;
-    case Precedence.EQUALITY:
-      return Precedence.COMPARISON;
-    case Precedence.COMPARISON:
-      return Precedence.TERM;
-    case Precedence.TERM:
-      return Precedence.FACTOR;
-    case Precedence.FACTOR:
-      return Precedence.POWER;
-    case Precedence.POWER:
-      return Precedence.UNARY;
-    case Precedence.UNARY:
-      return Precedence.CALL;
-    case Precedence.CALL:
-      return Precedence.PRIMARY;
-    case Precedence.PRIMARY:
+    case DloxPrecedence.NONE:
+      return DloxPrecedence.ASSIGNMENT;
+    case DloxPrecedence.ASSIGNMENT:
+      return DloxPrecedence.OR;
+    case DloxPrecedence.OR:
+      return DloxPrecedence.AND;
+    case DloxPrecedence.AND:
+      return DloxPrecedence.EQUALITY;
+    case DloxPrecedence.EQUALITY:
+      return DloxPrecedence.COMPARISON;
+    case DloxPrecedence.COMPARISON:
+      return DloxPrecedence.TERM;
+    case DloxPrecedence.TERM:
+      return DloxPrecedence.FACTOR;
+    case DloxPrecedence.FACTOR:
+      return DloxPrecedence.POWER;
+    case DloxPrecedence.POWER:
+      return DloxPrecedence.UNARY;
+    case DloxPrecedence.UNARY:
+      return DloxPrecedence.CALL;
+    case DloxPrecedence.CALL:
+      return DloxPrecedence.PRIMARY;
+    case DloxPrecedence.PRIMARY:
       throw Exception("Invalid State");
   }
 }

@@ -1,25 +1,21 @@
 import 'dart:convert';
 import 'dart:io';
 
-import '../compiler.dart';
-import '../models/errors.dart';
-import 'code_to_tokens.dart';
-import 'objfunction_to_output.dart';
+import '../domains/errors.dart';
+import 'code_to_objfunction.dart';
+import 'fundamental/objfunction_to_output.dart';
 
-void run_file({
-  required final String path,
+void run_dlox_from_file({
+  required final String source,
 }) {
-  final vm = VM(
+  final vm = DloxVM(
     silent: false,
   );
-  final source = File(path).readAsStringSync();
   final debug = Debug(
     false,
   );
-  final compiler_result = run_dlox_compiler(
-    tokens: run_lexer(
-      source: source,
-    ),
+  final compiler_result = source_to_dlox(
+    source: source,
     debug: debug,
     trace_bytecode: false,
   );
@@ -38,8 +34,8 @@ void run_file({
   }
 }
 
-void run_repl() {
-  final vm = VM(
+void run_dlox_repl() {
+  final vm = DloxVM(
     silent: false,
   );
   for (;;) {
@@ -51,17 +47,17 @@ void run_repl() {
     final debug = Debug(
       false,
     );
-    final compiler_result = run_dlox_compiler(
-      tokens: run_lexer(
-        source: line,
-      ),
+    final compiler_result = source_to_dlox(
+      source: line,
       debug: debug,
       trace_bytecode: false,
     );
     if (debug.errors.isNotEmpty) {
       continue;
     }
-    final globals = Map.fromEntries(vm.globals.data.entries);
+    final globals = Map.fromEntries(
+      vm.globals.data.entries,
+    );
     vm.set_function(
       compiler_result,
       debug.errors,

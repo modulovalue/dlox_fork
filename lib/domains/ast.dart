@@ -1,6 +1,6 @@
-import '../compiler.dart';
-
 // region compilation unit
+import 'tokens.dart';
+
 class CompilationUnit {
   final List<Declaration> decls;
 
@@ -23,14 +23,13 @@ abstract class Declaration {
 class DeclarationClazz implements Declaration {
   final Token name;
   final Token? superclass_name;
-  final List<Method> Function(Compiler) make_functions;
-  late final List<Method> functions;
+  final List<Method> functions;
   final int line;
 
-  DeclarationClazz({
+  const DeclarationClazz({
     required final this.name,
     required final this.superclass_name,
-    required final this.make_functions,
+    required final this.functions,
     required final this.line,
   });
 
@@ -45,13 +44,12 @@ class DeclarationClazz implements Declaration {
 }
 
 class DeclarationFun implements Declaration {
-  final Block Function(Compiler) make_block;
-  late final Block block;
+  final Functiony block;
   final Token name;
   final int line;
 
-  DeclarationFun({
-    required this.make_block,
+  const DeclarationFun({
+    required this.block,
     required this.name,
     required this.line,
   });
@@ -121,13 +119,12 @@ class Method {
 class Functiony {
   final String name;
   final List<Token> args;
-  final List<Declaration> Function(Compiler) make_decls;
-  late final List<Declaration> decls;
+  final List<Declaration> decls;
 
-  Functiony({
+  const Functiony({
     required final this.name,
     required final this.args,
-    required final this.make_decls,
+    required final this.decls,
   });
 }
 
@@ -185,7 +182,7 @@ class StmtLoop implements Stmt {
   final Token end_kw;
   final int line;
 
-  StmtLoop({
+  const StmtLoop({
     required final this.left,
     required final this.center,
     required final this.right,
@@ -216,7 +213,7 @@ class StmtLoop2 implements Stmt {
   final Token exit_token;
   final int line;
 
-  StmtLoop2({
+  const StmtLoop2({
     required final this.center,
     required final this.key_name,
     required final this.value_name,
@@ -241,16 +238,15 @@ class StmtLoop2 implements Stmt {
 class StmtConditional implements Stmt {
   final Expr expr;
   final Stmt stmt;
-  final Stmt? Function() other_maker;
-  late final Stmt? other;
+  final Stmt? other;
   final Token if_kw;
   final Token else_kw;
   final int line;
 
-  StmtConditional({
+  const StmtConditional({
     required final this.expr,
     required final this.stmt,
-    required final this.other_maker,
+    required final this.other,
     required final this.if_kw,
     required final this.else_kw,
     required final this.line,
@@ -320,12 +316,11 @@ class StmtWhil implements Stmt {
 }
 
 class StmtBlock implements Stmt {
-  final Iterable<Declaration> Function(Compiler) block_maker;
-  late final List<Declaration> block;
+  final List<Declaration> block;
   final int line;
 
-  StmtBlock({
-    required final this.block_maker,
+  const StmtBlock({
+    required final this.block,
     required final this.line,
   });
 
@@ -612,7 +607,7 @@ class ExprFalsity implements Expr {
 
 class ExprSelf implements Expr {
   final Token previous;
-final   int line;
+  final int line;
 
   const ExprSelf({
     required final this.previous,
@@ -796,7 +791,6 @@ class ExprEq implements Expr {
   });
 }
 
-
 Z match_expr<Z>({
   required final Expr expr,
   required final Z Function(ExprMap) map,
@@ -875,217 +869,5 @@ Z match_expr<Z>({
   if (expr is ExprNeq) return neq(expr);
   if (expr is ExprEq) return eq(expr);
   throw Exception("Invalid State");
-}
-// endregion
-
-// region token
-// TODO the compiler should not depend on this?
-// TODO  once parser and compilation are separate processes.
-abstract class Token {
-  TokenType get type;
-
-  Loc get loc;
-
-  String get lexeme;
-
-  String get info;
-}
-
-class TokenImpl implements Token {
-  @override
-  final TokenType type;
-  @override
-  final String lexeme;
-  @override
-  final Loc loc;
-
-  const TokenImpl({
-    required final this.type,
-    required final this.lexeme,
-    required final this.loc,
-  });
-
-  @override
-  String get info {
-    return '<${toString()} at $loc>';
-  }
-
-  @override
-  String toString() {
-    if (!_TOKEN_REPR.containsKey(type)) {
-      throw Exception('Representation not found: $type');
-    } else {
-      if (type == TokenType.EOF) {
-        return '';
-      } else if (type == TokenType.NUMBER || type == TokenType.STRING || type == TokenType.IDENTIFIER) {
-        return lexeme;
-      } else {
-        return _TOKEN_REPR[type]!;
-      }
-    }
-  }
-
-  @override
-  bool operator ==(
-      final Object o,
-      ) => o is Token && o.type == type && o.loc == loc && o.lexeme == lexeme;
-
-  @override
-  int get hashCode => type.hashCode ^ loc.hashCode ^ lexeme.hashCode;
-
-  static const _TOKEN_REPR = {
-    // Symbols
-    TokenType.LEFT_PAREN: '(',
-    TokenType.RIGHT_PAREN: ')',
-    TokenType.LEFT_BRACE: '{',
-    TokenType.RIGHT_BRACE: '}',
-    TokenType.LEFT_BRACK: '[',
-    TokenType.RIGHT_BRACK: ']',
-    TokenType.COMMA: ',',
-    TokenType.DOT: '.',
-    TokenType.SEMICOLON: ';',
-    TokenType.COLON: ':',
-    TokenType.BANG: '!',
-
-    // Operators
-    TokenType.MINUS: '-',
-    TokenType.PLUS: '+',
-    TokenType.SLASH: '/',
-    TokenType.STAR: '*',
-    TokenType.PERCENT: '%',
-    TokenType.CARET: '^',
-    TokenType.EQUAL: '=',
-    TokenType.AND: 'and',
-    TokenType.OR: 'or',
-
-    // Comparators
-    TokenType.BANG_EQUAL: '!=',
-    TokenType.EQUAL_EQUAL: '==',
-    TokenType.GREATER: '>',
-    TokenType.GREATER_EQUAL: '>=',
-    TokenType.LESS: '<',
-    TokenType.LESS_EQUAL: '<=',
-
-    // Literals
-    TokenType.IDENTIFIER: '<identifier>',
-    TokenType.STRING: '<str>',
-    TokenType.NUMBER: '<num>',
-    TokenType.OBJECT: '<obj>',
-
-    // Keywords
-    TokenType.CLASS: 'class',
-    TokenType.ELSE: 'else',
-    TokenType.FALSE: 'false',
-    TokenType.FOR: 'for',
-    TokenType.FUN: 'fun',
-    TokenType.IF: 'if',
-    TokenType.NIL: 'nil',
-    TokenType.PRINT: 'print',
-    TokenType.RETURN: 'rtn',
-    TokenType.SUPER: 'super',
-    TokenType.THIS: 'this',
-    TokenType.TRUE: 'true',
-    TokenType.VAR: 'var',
-    TokenType.WHILE: 'while',
-    TokenType.IN: 'in',
-    TokenType.BREAK: 'break',
-    TokenType.CONTINUE: 'continue',
-
-    // Editor syntactic sugar (dummy tokens)
-    TokenType.COMMENT: '<//>',
-    TokenType.EOF: 'eof',
-    TokenType.ERROR: '<error>',
-  };
-}
-
-enum TokenType {
-  // Single-char tokens.
-  LEFT_PAREN,
-  RIGHT_PAREN,
-  LEFT_BRACE,
-  RIGHT_BRACE,
-  LEFT_BRACK,
-  RIGHT_BRACK,
-  COMMA,
-  DOT,
-  MINUS,
-  PLUS,
-  SEMICOLON,
-  SLASH,
-  STAR,
-  COLON,
-  PERCENT,
-  CARET,
-
-  // One or two char tokens.
-  BANG,
-  BANG_EQUAL,
-  EQUAL,
-  EQUAL_EQUAL,
-  GREATER,
-  GREATER_EQUAL,
-  LESS,
-  LESS_EQUAL,
-
-  // Literals.
-  IDENTIFIER,
-  STRING,
-  NUMBER,
-  OBJECT,
-
-  // Keywords.
-  AND,
-  CLASS,
-  ELSE,
-  FALSE,
-  FOR,
-  FUN,
-  IF,
-  NIL,
-  OR,
-  PRINT,
-  RETURN,
-  SUPER,
-  THIS,
-  TRUE,
-  VAR,
-  WHILE,
-  IN,
-  BREAK, // TODO: add in dlox?
-  CONTINUE, // TODO: add in dlox?
-
-  // Editor syntactic sugar & helpers (dummy tokens)
-  ERROR,
-  COMMENT,
-  EOF,
-}
-
-// TODO migrate to an absolute offset and no line information.
-abstract class Loc {
-  int get line;
-}
-
-class LocImpl implements Loc {
-  @override
-  final int line;
-
-  const LocImpl(
-    final this.line,
-  );
-
-  @override
-  String toString() => line.toString();
-
-  @override
-  bool operator ==(
-    final Object other,
-  ) {
-    return (other is Loc) && other.line == line;
-  }
-
-  @override
-  int get hashCode {
-    return line.hashCode;
-  }
 }
 // endregion

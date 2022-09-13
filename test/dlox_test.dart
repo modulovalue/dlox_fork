@@ -1,7 +1,7 @@
 import 'dart:isolate';
 
-import 'package:dlox/arrows/code_to_tokens.dart';
-import 'package:dlox/arrows/test_suite.dart';
+import 'package:dlox/arrows/fundamental/code_to_tokens.dart';
+import 'package:dlox/testsuite/test_suite.dart';
 import 'package:test/test.dart';
 
 Future<void> main() async {
