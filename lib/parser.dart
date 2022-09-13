@@ -5,23 +5,25 @@ import 'models/ast.dart';
 import 'models/errors.dart';
 
 MapEntry<Parser, ErrorDelegate> make_parser({
-  required final List<NaturalToken> tokens,
+  required final List<Token> tokens,
   required final Debug debug,
 }) {
   final parser = _ParserImpl(
     tokens: tokens,
     debug: debug,
   );
-  parser.advance();
-  return MapEntry(parser, parser);
+  return MapEntry(
+    parser,
+    parser,
+  );
 }
 
 class _ParserImpl implements Parser, ErrorDelegate {
-  final List<NaturalToken> tokens;
+  final List<Token> tokens;
   @override
   final Debug debug;
-  NaturalToken? current;
-  NaturalToken? previous;
+  Token? current;
+  Token? previous;
   int current_idx;
   bool panic_mode;
 
@@ -29,23 +31,24 @@ class _ParserImpl implements Parser, ErrorDelegate {
     required final this.tokens,
     required final this.debug,
   })  : current_idx = 0,
-        panic_mode = false;
+        panic_mode = false {
+    advance();
+  }
 
   @override
   int get previous_line {
     return previous!.loc.line;
   }
 
+  @override
   void error_at(
-    final NaturalToken? token,
+    final Token token,
     final String? message,
   ) {
-    if (panic_mode) {
-      return;
-    } else {
+    if (!panic_mode) {
       panic_mode = true;
       final error = CompilerError(
-        token: token!,
+        token: token,
         msg: message,
       );
       debug.errors.add(error);
@@ -53,28 +56,12 @@ class _ParserImpl implements Parser, ErrorDelegate {
     }
   }
 
-  @override
-  void error_at_previous(
-    final String message,
-  ) {
-    error_at(previous, message);
-  }
-
-  @override
-  void error_at_current(
-    final String? message,
-  ) {
-    error_at(current, message);
-  }
-
-  @override
   void advance() {
     previous = current;
     while (current_idx < tokens.length) {
       current = tokens[current_idx++];
-      // Skip invalid tokens.
       if (current!.type == TokenType.ERROR) {
-        error_at_current(current!.lexeme);
+        error_at(current!, current!.lexeme);
       } else if (current!.type != TokenType.COMMENT) {
         break;
       }
@@ -88,7 +75,7 @@ class _ParserImpl implements Parser, ErrorDelegate {
     if (current!.type == type) {
       advance();
     } else {
-      error_at_current(message);
+      error_at(current!, message);
     }
   }
 
@@ -109,431 +96,163 @@ class _ParserImpl implements Parser, ErrorDelegate {
     }
   }
 
-  List<Expr> parse_argument_list(
-    final Expr Function() parse_expression,
-  ) {
-    final args = <Expr>[];
-    if (!check(TokenType.RIGHT_PAREN)) {
-      do {
-        args.add(parse_expression());
-        if (args.length == 256) {
-          error_at_previous("Can't have more than 255 arguments");
-        }
-      } while (match(TokenType.COMMA));
+  Expr parse_expression() {
+    final self = parse_expression;
+    List<Expr> parse_argument_list() {
+      final args = <Expr>[];
+      if (!check(TokenType.RIGHT_PAREN)) {
+        do {
+          args.add(self());
+          if (args.length == 256) {
+            error_at(previous!, "Can't have more than 255 arguments");
+          }
+        } while (match(TokenType.COMMA));
+      }
+      consume(TokenType.RIGHT_PAREN, "Expect ')' after arguments");
+      return args;
     }
-    consume(TokenType.RIGHT_PAREN, "Expect ')' after arguments");
-    return args;
-  }
 
-  @override
-  Declaration parse_declaration({
-    required final Compiler compiler,
-  }) {
-    final _compile_expr = compiler.compile_expr;
-    Expr parse_expression() {
-      Expr parse_precedence(
-        final Precedence precedence,
-      ) {
-        final can_assign = precedence.index <= Precedence.ASSIGNMENT.index;
-        advance();
-        final Expr? prefix_rule = () {
-          switch (previous!.type) {
-            case TokenType.LEFT_PAREN:
-              final expr = parse_expression();
-              consume(TokenType.RIGHT_PAREN, "Expect ')' after expression");
-              return expr;
-            case TokenType.STRING:
-              return _compile_expr(
-                ExprString(
-                  token: previous!,
-                ),
-              );
-            case TokenType.NUMBER:
-              return _compile_expr(
-                ExprNumber(
-                  value: previous!,
-                ),
-              );
-            case TokenType.OBJECT:
-              return _compile_expr(
-                const ExprObject(),
-              );
-            case TokenType.THIS:
-              return _compile_expr(
-                ExprSelf(
-                  previous: previous!,
-                ),
-              );
-            case TokenType.FALSE:
-              return _compile_expr(
-                const ExprFalsity(),
-              );
-            case TokenType.NIL:
-              return _compile_expr(
-                const ExprNil(),
-              );
-            case TokenType.TRUE:
-              return _compile_expr(
-                const ExprTruth(),
-              );
-            case TokenType.MINUS:
-              return _compile_expr(
-                ExprNegated(
-                  child: parse_precedence(Precedence.UNARY),
-                ),
-              );
-            case TokenType.BANG:
-              return _compile_expr(
-                ExprNot(
-                  child: parse_precedence(Precedence.UNARY),
-                ),
-              );
-            // TODO
-            case TokenType.IDENTIFIER:
-              final name = previous!;
-              if (can_assign) {
-                if (match(TokenType.EQUAL)) {
-                  return _compile_expr(
-                    ExprSet2(
-                      name: name,
-                      arg: parse_expression(),
-                    ),
-                  );
-                } else {
-                  return _compile_expr(
-                    ExprGetSet2(
-                      name: name,
-                      arg_maker: () {
-                        Expr expression() {
-                          advance();
-                          advance();
-                          return parse_expression();
-                        }
-
-                        bool match_pair(
-                          final TokenType first,
-                          final TokenType second,
-                        ) {
-                          if (check(first)) {
-                            if (current_idx >= tokens.length) {
-                              return false;
-                            } else if (tokens[current_idx].type != second) {
-                              return false;
-                            } else {
-                              return true;
-                            }
-                          } else {
-                            return false;
-                          }
-                        }
-
-                        // TODO try some late final trick until the cycle has been migrated.
-                        if (match_pair(TokenType.PLUS, TokenType.EQUAL)) {
-                          return () => ExprPluseq(child: expression());
-                        } else if (match_pair(TokenType.MINUS, TokenType.EQUAL)) {
-                          return () => ExprMinuseq(child: expression());
-                        } else if (match_pair(TokenType.STAR, TokenType.EQUAL)) {
-                          return () => ExprStareq(child: expression());
-                        } else if (match_pair(TokenType.SLASH, TokenType.EQUAL)) {
-                          return () => ExprSlasheq(child: expression());
-                        } else if (match_pair(TokenType.PERCENT, TokenType.EQUAL)) {
-                          return () => ExprModeq(child: expression());
-                        } else if (match_pair(TokenType.CARET, TokenType.EQUAL)) {
-                          return () => ExprPoweq(child: expression());
-                        } else {
-                          return null;
-                        }
-                      }(),
-                    ),
-                  );
-                }
-              } else {
-                return _compile_expr(
-                  ExprGet2(
-                    name: name,
-                  ),
+    Expr parse_precedence(
+      final Precedence precedence,
+    ) {
+      final can_assign = precedence.index <= Precedence.ASSIGNMENT.index;
+      advance();
+      final Expr? prefix_rule = () {
+        switch (previous!.type) {
+          case TokenType.LEFT_PAREN:
+            final expr = self();
+            consume(TokenType.RIGHT_PAREN, "Expect ')' after expression");
+            return expr;
+          case TokenType.STRING:
+            return ExprString(
+              token: previous!,
+              line: previous_line,
+            );
+          case TokenType.NUMBER:
+            return ExprNumber(
+              value: previous!,
+              line: previous_line,
+            );
+          case TokenType.OBJECT:
+            return ExprObject(
+              token: previous!,
+              line: previous_line,
+            );
+          case TokenType.THIS:
+            return ExprSelf(
+              previous: previous!,
+              line: previous_line,
+            );
+          case TokenType.FALSE:
+            return ExprFalsity(
+              line: previous_line,
+            );
+          case TokenType.NIL:
+            return ExprNil(
+              line: previous_line,
+            );
+          case TokenType.TRUE:
+            return ExprTruth(
+              line: previous_line,
+            );
+          case TokenType.MINUS:
+            return ExprNegated(
+              child: parse_precedence(Precedence.UNARY),
+              line: previous_line,
+            );
+          case TokenType.BANG:
+            return ExprNot(
+              child: parse_precedence(Precedence.UNARY),
+              line: previous_line,
+            );
+          case TokenType.IDENTIFIER:
+            final name = previous!;
+            if (can_assign) {
+              if (match(TokenType.EQUAL)) {
+                return ExprSet2(
+                  name: name,
+                  arg: self(),
+                  line: previous_line,
                 );
-              }
-            case TokenType.LEFT_BRACE:
-              final entries = <MapEntry<Expr, Expr>>[];
-              if (!check(TokenType.RIGHT_BRACE)) {
-                for (;;) {
-                  final key = parse_expression();
-                  consume(TokenType.COLON, "Expect ':' between map key-value pairs");
-                  final value = parse_expression();
-                  entries.add(
-                    MapEntry(
-                      key,
-                      value,
-                    ),
-                  );
-                  if (match(TokenType.COMMA)) {
-                    continue;
-                  } else {
-                    break;
-                  }
-                }
-              }
-              consume(TokenType.RIGHT_BRACE, "Expect '}' after map initializer");
-              return _compile_expr(
-                ExprMap(
-                  entries: entries,
-                ),
-              );
-            case TokenType.LEFT_BRACK:
-              int val_count = 0;
-              final values = <Expr>[];
-              if (!check(TokenType.RIGHT_BRACK)) {
-                values.add(parse_expression());
-                val_count += 1;
-                if (match(TokenType.COLON)) {
-                  values.add(parse_expression());
-                  val_count = -1;
-                } else {
-                  while (match(TokenType.COMMA)) {
-                    values.add(parse_expression());
-                    val_count++;
-                  }
-                }
-              }
-              consume(TokenType.RIGHT_BRACK, "Expect ']' after list initializer");
-              return _compile_expr(
-                ExprList(
-                  values: values,
-                  val_count: val_count,
-                ),
-              );
-            case TokenType.SUPER:
-              consume(TokenType.DOT, "Expect '.' after 'super'");
-              consume(TokenType.IDENTIFIER, 'Expect superclass method name');
-              final name_token = previous!;
-              return _compile_expr(
-                ExprSuperaccess(
-                  kw: name_token,
-                  make_args: () {
-                    if (match(TokenType.LEFT_PAREN)) {
-                      return () => parse_argument_list(parse_expression);
+              } else {
+                return ExprGetSet2(
+                  name: name,
+                  child: (){
+                    bool match_pair(
+                      final TokenType first,
+                      final TokenType second,
+                    ) {
+                      if (check(first)) {
+                        if (current_idx >= tokens.length) {
+                          return false;
+                        } else if (tokens[current_idx].type != second) {
+                          return false;
+                        } else {
+                          advance();
+                          advance();
+                          return true;
+                        }
+                      } else {
+                        return false;
+                      }
+                    }
+
+                    if (match_pair(TokenType.PLUS, TokenType.EQUAL)) {
+                      return Getset(
+                        type: GetsetType.pluseq,
+                        child: self(),
+                      );
+                    } else if (match_pair(TokenType.MINUS, TokenType.EQUAL)) {
+                      return Getset(
+                        type: GetsetType.minuseq,
+                        child: self(),
+                      );
+                    } else if (match_pair(TokenType.STAR, TokenType.EQUAL)) {
+                      return Getset(
+                        type: GetsetType.stareq,
+                        child: self(),
+                      );
+                    } else if (match_pair(TokenType.SLASH, TokenType.EQUAL)) {
+                      return Getset(
+                        type: GetsetType.slasheq,
+                        child: self(),
+                      );
+                    } else if (match_pair(TokenType.PERCENT, TokenType.EQUAL)) {
+                      return Getset(
+                        type: GetsetType.modeq,
+                        child: self(),
+                      );
+                    } else if (match_pair(TokenType.CARET, TokenType.EQUAL)) {
+                      return Getset(
+                        type: GetsetType.poweq,
+                        child: self(),
+                      );
                     } else {
                       return null;
                     }
                   }(),
-                ),
+                  line: previous_line,
+                );
+              }
+            } else {
+              return ExprGetSet2(
+                name: name,
+                child: null,
+                line: previous_line,
               );
-            default:
-              return null;
-          }
-        }();
-        if (prefix_rule == null) {
-          return _compile_expr(
-            const ExprExpected(),
-          );
-        } else {
-          return _compile_expr(
-            ExprComposite(
-              exprs: () {
-                final exprs = <Expr>[
-                  prefix_rule,
-                ];
-                while (precedence.index <= get_precedence(current!.type).index) {
-                  advance();
-                  exprs.add(
-                    () {
-                      switch (previous!.type) {
-                        case TokenType.LEFT_BRACK:
-                          return compiler.visit_bracket<Expr>(
-                            () => match(TokenType.COLON),
-                            () {
-                              if (match(TokenType.RIGHT_BRACK)) {
-                                return null;
-                              } else {
-                                final expr = parse_expression();
-                                consume(TokenType.RIGHT_BRACK, "Expect ']' after list indexing");
-                                return expr;
-                              }
-                            },
-                            () {
-                              consume(TokenType.RIGHT_BRACK, "Expect ']' after list indexing");
-                              if (can_assign || match(TokenType.EQUAL)) {
-                                return parse_expression();
-                              } else {
-                                return null;
-                              }
-                            },
-                            parse_expression,
-                            (final f, final s) => ExprListGetter(
-                              first: f,
-                              second: s,
-                            ),
-                            (final f, final s) => ExprListSetter(
-                              first: f,
-                              second: s,
-                            ),
-                          );
-                        case TokenType.LEFT_PAREN:
-                          return _compile_expr(
-                            ExprCall(
-                              args: parse_argument_list(parse_expression),
-                            ),
-                          );
-                        case TokenType.DOT:
-                          consume(TokenType.IDENTIFIER, "Expect property name after '.'");
-                          final name_token = previous!;
-                          if (can_assign && match(TokenType.EQUAL)) {
-                            return _compile_expr(
-                              ExprSet(
-                                name: name_token,
-                                arg: parse_expression(),
-                              ),
-                            );
-                          } else if (match(TokenType.LEFT_PAREN)) {
-                            return _compile_expr(
-                              ExprInvoke(
-                                name: name_token,
-                                args: parse_argument_list(parse_expression),
-                              ),
-                            );
-                          } else {
-                            return _compile_expr(
-                              ExprGet(
-                                name: name_token,
-                              ),
-                            );
-                          }
-                        case TokenType.MINUS:
-                          return _compile_expr(
-                            ExprMinus(
-                              child: parse_precedence(get_next_precedence(TokenType.MINUS)),
-                            ),
-                          );
-                        case TokenType.PLUS:
-                          return _compile_expr(
-                            ExprPlus(
-                              child: parse_precedence(get_next_precedence(TokenType.PLUS)),
-                            ),
-                          );
-                        case TokenType.SLASH:
-                          return _compile_expr(
-                            ExprSlash(
-                              child: parse_precedence(get_next_precedence(TokenType.SLASH)),
-                            ),
-                          );
-                        case TokenType.STAR:
-                          return _compile_expr(
-                            ExprStar(
-                              child: parse_precedence(get_next_precedence(TokenType.STAR)),
-                            ),
-                          );
-                        case TokenType.CARET:
-                          return _compile_expr(
-                            ExprPow(
-                              child: parse_precedence(get_next_precedence(TokenType.CARET)),
-                            ),
-                          );
-                        case TokenType.PERCENT:
-                          return _compile_expr(
-                            ExprModulo(
-                              child: parse_precedence(get_next_precedence(TokenType.PERCENT)),
-                            ),
-                          );
-                        case TokenType.BANG_EQUAL:
-                          return _compile_expr(
-                            ExprNeq(
-                              child: parse_precedence(get_next_precedence(TokenType.BANG_EQUAL)),
-                            ),
-                          );
-                        case TokenType.EQUAL_EQUAL:
-                          return _compile_expr(
-                            ExprEq(
-                              child: parse_precedence(get_next_precedence(TokenType.EQUAL_EQUAL)),
-                            ),
-                          );
-                        case TokenType.GREATER:
-                          return _compile_expr(
-                            ExprG(
-                              child: parse_precedence(get_next_precedence(TokenType.GREATER)),
-                            ),
-                          );
-                        case TokenType.GREATER_EQUAL:
-                          return _compile_expr(
-                            ExprGeq(
-                              child: parse_precedence(get_next_precedence(TokenType.GREATER_EQUAL)),
-                            ),
-                          );
-                        case TokenType.LESS:
-                          return _compile_expr(
-                            ExprL(
-                              child: parse_precedence(get_next_precedence(TokenType.LESS)),
-                            ),
-                          );
-                        case TokenType.LESS_EQUAL:
-                          return _compile_expr(
-                            ExprLeq(
-                              child: parse_precedence(get_next_precedence(TokenType.LESS_EQUAL)),
-                            ),
-                          );
-                        case TokenType.AND:
-                          return  _compile_expr(
-                            ExprAnd(
-                              child_maker: () => parse_precedence(
-                                get_precedence(TokenType.AND),
-                              ),
-                            ),
-                          );
-                        case TokenType.OR:
-                          return _compile_expr(
-                            ExprOr(
-                              child_maker: () => parse_precedence(
-                                get_precedence(
-                                  TokenType.OR,
-                                ),
-                              ),
-                            ),
-                          );
-                        default:
-                          throw Exception("Invalid State");
-                      }
-                    }(),
-                  );
-                }
-                if (can_assign) {
-                  if (match(TokenType.EQUAL)) {
-                    error_at_previous('Invalid assignment target');
-                  }
-                }
-                return exprs;
-              }(),
-            ),
-          );
-        }
-      }
-      return parse_precedence(Precedence.ASSIGNMENT);
-    }
-
-    Expr expression() {
-      // TODO parse expression
-      // TODO compile_expression
-      final expr =  parse_expression();
-      // return compile_expr(expr, compiler);
-      return expr;
-    }
-
-    DeclarationVari var_declaration() {
-      return DeclarationVari(
-        exprs: () {
-          final exprs = compiler.visit_var_decl<Expr>(
-            () sync* {
+            }
+          case TokenType.LEFT_BRACE:
+            final entries = <MapEntry<Expr, Expr>>[];
+            if (!check(TokenType.RIGHT_BRACE)) {
               for (;;) {
-                consume(TokenType.IDENTIFIER, 'Expect variable name');
-                yield MapEntry(
-                  previous!,
-                  () {
-                    if (match(TokenType.EQUAL)) {
-                      return expression();
-                    } else {
-                      compiler.visit_nil_post();
-                      return const ExprNil();
-                    }
-                  },
+                final key = self();
+                consume(TokenType.COLON, "Expect ':' between map key-value pairs");
+                final value = self();
+                entries.add(
+                  MapEntry(
+                    key,
+                    value,
+                  ),
                 );
                 if (match(TokenType.COMMA)) {
                   continue;
@@ -541,278 +260,553 @@ class _ParserImpl implements Parser, ErrorDelegate {
                   break;
                 }
               }
-            },
-          );
-          consume(TokenType.SEMICOLON, 'Expect a newline after variable declaration');
-          return exprs;
-        }(),
-      );
-    }
-
-    Stmt statement() {
-      if (match(TokenType.PRINT)) {
-        final expr = expression();
-        consume(TokenType.SEMICOLON, 'Expect a newline after value');
-        compiler.visit_print_post();
-        return StmtOutput(
-          expr: expr,
-        );
-      } else if (match(TokenType.FOR)) {
-        if (match(TokenType.LEFT_PAREN)) {
-          return compiler.visit_classic_for<LoopLeft, Expr, Stmt, StmtLoop>(
-            () {
-              if (match(TokenType.SEMICOLON)) {
-                return null;
-              } else if (match(TokenType.VAR)) {
-                return LoopLeftVari(
-                  decl: var_declaration(),
-                );
-              } else {
-                final expr = expression();
-                consume(TokenType.SEMICOLON, 'Expect a newline after expression');
-                compiler.pop();
-                return LoopLeftExpr(
-                  expr: expr,
-                );
-              }
-            },
-            () {
-              if (match(TokenType.SEMICOLON)) {
-                return null;
-              } else {
-                final expr = expression();
-                consume(TokenType.SEMICOLON, "Expect ';' after loop condition");
-                return expr;
-              }
-            },
-            () {
-              if (match(TokenType.RIGHT_PAREN)) {
-                return null;
-              } else {
-                return () {
-                  final expr = expression();
-                  consume(TokenType.RIGHT_PAREN, "Expect ')' after for clauses");
-                  return expr;
-                };
-              }
-            },
-            statement,
-            (final a, final b, final c, final d) => StmtLoop(
-              left: a,
-              center: b,
-              right: c,
-              body: d,
-            ),
-          );
-        } else {
-          final key_name = () {
-            consume(TokenType.IDENTIFIER, 'Expect variable name');
-            return previous!;
-          }();
-          final value_name = () {
-            if (match(TokenType.COMMA)) {
-              consume(TokenType.IDENTIFIER, 'Expect variable name');
-              return previous!;
-            } else {
-              return null;
             }
-          }();
-          consume(TokenType.IN, "Expect 'in' after loop variables");
-          return compiler.visit_iter_for<Expr, Stmt, StmtLoop2>(
-            key_name: key_name,
-            value_name: value_name,
-            iterable: expression,
-            body: statement,
-            make: (final iterable, final body) => StmtLoop2(
-              key_name: key_name,
-              value_name: value_name,
-              center: iterable,
-              body: body,
-            ),
-          );
-        }
-      } else if (match(TokenType.IF)) {
-        return compiler.visit_if<Expr, Stmt, StmtConditional>(
-          expression,
-          statement,
-          () {
-            if (match(TokenType.ELSE)) {
-              return statement();
-            } else {
-              return null;
-            }
-          },
-          (final a, final b, final c) => StmtConditional(
-            expr: a,
-            stmt: b,
-            other: c,
-          ),
-        );
-      } else if (match(TokenType.RETURN)) {
-        if (match(TokenType.SEMICOLON)) {
-          compiler.visit_return_empty_post();
-          return const StmtRet(
-            expr: null,
-          );
-        } else {
-          return StmtRet(
-            expr: compiler.visit_return_expr(
-              () {
-                final expr = expression();
-                consume(TokenType.SEMICOLON, 'Expect a newline after return value');
-                return expr;
-              },
-            ),
-          );
-        }
-      } else if (match(TokenType.WHILE)) {
-        return compiler.visit_while<Expr, Stmt, Stmt>(
-          expression,
-          statement,
-          (final expr, final stmt) => StmtWhil(
-            expr: expr,
-            stmt: stmt,
-          ),
-        );
-      } else if (match(TokenType.LEFT_BRACE)) {
-        return StmtBlock(
-          block: Block(
-            decls: compiler.visit_block(
-              () sync* {
-                while (!check(TokenType.RIGHT_BRACE) && !check(TokenType.EOF)) {
-                  yield parse_declaration(
-                    compiler: compiler,
-                  );
+            consume(TokenType.RIGHT_BRACE, "Expect '}' after map initializer");
+            return ExprMap(
+              entries: entries,
+              line: previous_line,
+            );
+          case TokenType.LEFT_BRACK:
+            int val_count = 0;
+            final values = <Expr>[];
+            if (!check(TokenType.RIGHT_BRACK)) {
+              values.add(self());
+              val_count += 1;
+              if (match(TokenType.COLON)) {
+                values.add(self());
+                val_count = -1;
+              } else {
+                while (match(TokenType.COMMA)) {
+                  values.add(self());
+                  val_count++;
                 }
-                consume(TokenType.RIGHT_BRACE, 'Unterminated block');
-              },
-            ),
-          ),
-        );
+              }
+            }
+            consume(TokenType.RIGHT_BRACK, "Expect ']' after list initializer");
+            return ExprList(
+              values: values,
+              val_count: val_count,
+              line: previous_line,
+            );
+          case TokenType.SUPER:
+            consume(TokenType.DOT, "Expect '.' after 'super'");
+            consume(TokenType.IDENTIFIER, 'Expect superclass method name');
+            return ExprSuperaccess(
+              kw: previous!,
+              args: () {
+                if (match(TokenType.LEFT_PAREN)) {
+                  return parse_argument_list();
+                } else {
+                  return null;
+                }
+              }(),
+              line: previous_line,
+            );
+          default:
+            return null;
+        }
+      }();
+      if (prefix_rule == null) {
+        error_at(previous!, 'Expect expression');
+        return const ExprExpected();
       } else {
-        final expr = expression();
-        consume(TokenType.SEMICOLON, 'Expect a newline after expression');
-        // region emitter
-        compiler.visit_expr_stmt_post();
-        // endregion
-        return StmtExpr(
-          expr: expr,
-        );
-      }
-    }
-
-    Block function_block(
-      final FunctionType type,
-    ) {
-      return compiler.visit_fn<Declaration, Block>(
-        () => previous!.lexeme,
-        type,
-        () {
-          consume(TokenType.LEFT_PAREN, "Expect '(' after function name");
-          final args = <NaturalToken>[];
-          if (!check(TokenType.RIGHT_PAREN)) {
-            argloop:
-            for (;;) {
-              consume(TokenType.IDENTIFIER, 'Expect parameter name');
-              args.add(previous!);
-              if (match(TokenType.COMMA)) {
-                continue argloop;
-              } else {
-                break argloop;
-              }
-            }
-          }
-          consume(TokenType.RIGHT_PAREN, "Expect ')' after parameters");
-          return args;
-        },
-        (final declaration) {
-          consume(TokenType.LEFT_BRACE, 'Expect function body');
-          return Block(
-            decls: () {
-              final decls = <Declaration>[];
-              while (!check(TokenType.RIGHT_BRACE) && !check(TokenType.EOF)) {
-                final decl = declaration();
-                decls.add(decl);
-              }
-              consume(TokenType.RIGHT_BRACE, 'Unterminated block');
-              return decls;
-            }(),
-          );
-        },
-        (final compiler) => parse_declaration(
-          compiler: compiler,
-        ),
-      );
-    }
-
-    Declaration parse_decl() {
-      if (match(TokenType.CLASS)) {
-        consume(TokenType.IDENTIFIER, 'Expect class name');
-        final class_name = previous!;
-        final functions = compiler.visit_class<Method, Block>(
-          class_name,
-          () => previous!,
-          () {
-            if (match(TokenType.LESS)) {
-              consume(TokenType.IDENTIFIER, 'Expect superclass name');
-              return previous!;
-            } else {
-              return null;
-            }
-          },
-          (final fn) {
-            consume(TokenType.LEFT_BRACE, 'Expect class body');
-            final functions = <Method>[];
-            while (!check(TokenType.RIGHT_BRACE) && !check(TokenType.EOF)) {
-              consume(TokenType.IDENTIFIER, 'Expect method name');
-              functions.add(
-                fn(
-                  previous!,
-                  (final true_init_false_method) => function_block(
-                    () {
-                      if (true_init_false_method) {
-                        return FunctionType.INITIALIZER;
+        return ExprComposite(
+          exprs: () {
+            final exprs = <Expr>[
+              prefix_rule,
+            ];
+            while (precedence.index <= get_precedence(current!.type).index) {
+              advance();
+              exprs.add(
+                () {
+                  switch (previous!.type) {
+                    case TokenType.LEFT_BRACK:
+                      final first = () {
+                        if (match(TokenType.COLON)) {
+                          return null;
+                        } else {
+                          return self();
+                        }
+                      }();
+                      final getter_ish = () {
+                        if (first == null) {
+                          return true;
+                        } else {
+                          return match(TokenType.COLON);
+                        }
+                      }();
+                      if (getter_ish) {
+                        return ExprListGetter(
+                          first_token: previous!,
+                          second_token: previous!,
+                          first: first,
+                          second: () {
+                            if (match(TokenType.RIGHT_BRACK)) {
+                              return null;
+                            } else {
+                              final expr = self();
+                              consume(TokenType.RIGHT_BRACK, "Expect ']' after list indexing");
+                              return expr;
+                            }
+                          }(),
+                          line: previous_line,
+                        );
                       } else {
-                        return FunctionType.METHOD;
+                        return ExprListSetter(
+                          token: previous!,
+                          first: first,
+                          second: () {
+                            consume(TokenType.RIGHT_BRACK, "Expect ']' after list indexing");
+                            if (can_assign || match(TokenType.EQUAL)) {
+                              return self();
+                            } else {
+                              return null;
+                            }
+                          }(),
+                          line: previous_line,
+                        );
                       }
-                    }(),
-                  ),
-                ),
+                    case TokenType.LEFT_PAREN:
+                      return ExprCall(
+                        args: parse_argument_list(),
+                        line: previous_line,
+                      );
+                    case TokenType.DOT:
+                      consume(TokenType.IDENTIFIER, "Expect property name after '.'");
+                      final name_token = previous!;
+                      if (can_assign && match(TokenType.EQUAL)) {
+                        return ExprSet(
+                          name: name_token,
+                          arg: self(),
+                          line: previous_line,
+                        );
+                      } else if (match(TokenType.LEFT_PAREN)) {
+                        return ExprInvoke(
+                          name: name_token,
+                          args: parse_argument_list(),
+                          line: previous_line,
+                        );
+                      } else {
+                        return ExprGet(
+                          name: name_token,
+                          line: previous_line,
+                        );
+                      }
+                    case TokenType.MINUS:
+                      return ExprMinus(
+                        child: parse_precedence(get_next_precedence(TokenType.MINUS)),
+                        line: previous_line,
+                      );
+                    case TokenType.PLUS:
+                      return ExprPlus(
+                        child: parse_precedence(get_next_precedence(TokenType.PLUS)),
+                        line: previous_line,
+                      );
+                    case TokenType.SLASH:
+                      return ExprSlash(
+                        child: parse_precedence(get_next_precedence(TokenType.SLASH)),
+                        line: previous_line,
+                      );
+                    case TokenType.STAR:
+                      return ExprStar(
+                        child: parse_precedence(get_next_precedence(TokenType.STAR)),
+                        line: previous_line,
+                      );
+                    case TokenType.CARET:
+                      return ExprPow(
+                        child: parse_precedence(get_next_precedence(TokenType.CARET)),
+                        line: previous_line,
+                      );
+                    case TokenType.PERCENT:
+                      return ExprModulo(
+                        child: parse_precedence(get_next_precedence(TokenType.PERCENT)),
+                        line: previous_line,
+                      );
+                    case TokenType.BANG_EQUAL:
+                      return ExprNeq(
+                        child: parse_precedence(get_next_precedence(TokenType.BANG_EQUAL)),
+                        line: previous_line,
+                      );
+                    case TokenType.EQUAL_EQUAL:
+                      return ExprEq(
+                        child: parse_precedence(get_next_precedence(TokenType.EQUAL_EQUAL)),
+                        line: previous_line,
+                      );
+                    case TokenType.GREATER:
+                      return ExprG(
+                        child: parse_precedence(get_next_precedence(TokenType.GREATER)),
+                        line: previous_line,
+                      );
+                    case TokenType.GREATER_EQUAL:
+                      return ExprGeq(
+                        child: parse_precedence(get_next_precedence(TokenType.GREATER_EQUAL)),
+                        line: previous_line,
+                      );
+                    case TokenType.LESS:
+                      return ExprL(
+                        child: parse_precedence(get_next_precedence(TokenType.LESS)),
+                        line: previous_line,
+                      );
+                    case TokenType.LESS_EQUAL:
+                      return ExprLeq(
+                        child: parse_precedence(get_next_precedence(TokenType.LESS_EQUAL)),
+                        line: previous_line,
+                      );
+                    case TokenType.AND:
+                      return ExprAnd(
+                        token: previous!,
+                        child: parse_precedence(
+                          get_precedence(TokenType.AND),
+                        ),
+                        line: previous_line,
+                      );
+                    case TokenType.OR:
+                      return ExprOr(
+                        token: previous!,
+                        child: parse_precedence(
+                          get_precedence(
+                            TokenType.OR,
+                          ),
+                        ),
+                        line: previous_line,
+                      );
+                    default:
+                      throw Exception("Invalid State");
+                  }
+                }(),
               );
             }
-            consume(TokenType.RIGHT_BRACE, 'Unterminated class body');
-            return functions;
-          },
-          (final a, final b) => Method(
-            name: a,
-            block: b,
-          ),
-        );
-        return DeclarationClazz(
-          name: class_name,
-          functions: functions,
-        );
-      } else if (match(TokenType.FUN)) {
-        consume(TokenType.IDENTIFIER, 'Expect function name');
-        final name = previous!;
-        final block = compiler.visit_fun(
-          name,
-          () => function_block(FunctionType.FUNCTION),
-        );
-        return DeclarationFun(
-          block: block,
-          name: name,
-        );
-      } else if (match(TokenType.VAR)) {
-        return var_declaration();
-      } else {
-        return DeclarationStmt(
-          stmt: statement(),
+            if (can_assign) {
+              if (match(TokenType.EQUAL)) {
+                error_at(previous!, 'Invalid assignment target');
+              }
+            }
+            return exprs;
+          }(),
         );
       }
     }
 
-    final decl = parse_decl();
+    return parse_precedence(Precedence.ASSIGNMENT);
+  }
+
+  DeclarationVari parse_var_declaration() {
+    return DeclarationVari(
+      exprs: () {
+        final exprs = () sync* {
+          for (;;) {
+            consume(TokenType.IDENTIFIER, 'Expect variable name');
+            yield MapEntry(
+              previous!,
+              () {
+                if (match(TokenType.EQUAL)) {
+                  return parse_expression();
+                } else {
+                  return ExprNil(
+                    line: previous_line,
+                  );
+                }
+              }(),
+            );
+            if (match(TokenType.COMMA)) {
+              continue;
+            } else {
+              break;
+            }
+          }
+        }()
+            .toList();
+        consume(TokenType.SEMICOLON, 'Expect a newline after variable declaration');
+        return exprs;
+      }(),
+      line: previous_line,
+    );
+  }
+
+  Stmt parse_statement() {
+    if (match(TokenType.FOR)) {
+      if (match(TokenType.LEFT_PAREN)) {
+        return StmtLoop(
+          left: () {
+            if (match(TokenType.SEMICOLON)) {
+              return null;
+            } else if (match(TokenType.VAR)) {
+              final decl = parse_var_declaration();
+              return LoopLeftVari(
+                decl: decl,
+              );
+            } else {
+              final expr = parse_expression();
+              consume(TokenType.SEMICOLON, 'Expect a newline after expression');
+              return LoopLeftExpr(
+                expr: expr,
+              );
+            }
+          }(),
+          center: () {
+            if (match(TokenType.SEMICOLON)) {
+              return null;
+            } else {
+              final expr = parse_expression();
+              consume(TokenType.SEMICOLON, "Expect ';' after loop condition");
+              return expr;
+            }
+          }(),
+          right_kw: previous!,
+          right: () {
+            if (match(TokenType.RIGHT_PAREN)) {
+              return null;
+            } else {
+              final expr = parse_expression();
+              consume(TokenType.RIGHT_PAREN, "Expect ')' after for clauses");
+              return expr;
+            }
+          }(),
+          end_kw: previous!,
+          body: parse_statement(),
+          line: previous_line,
+        );
+      } else {
+        final key_name = () {
+          consume(TokenType.IDENTIFIER, 'Expect variable name');
+          return previous!;
+        }();
+        final value_name = () {
+          if (match(TokenType.COMMA)) {
+            consume(TokenType.IDENTIFIER, 'Expect variable name');
+            return previous!;
+          } else {
+            return null;
+          }
+        }();
+        consume(TokenType.IN, "Expect 'in' after loop variables");
+        return StmtLoop2(
+          key_name: key_name,
+          value_name: value_name,
+          center: parse_expression(),
+          exit_token: previous!,
+          body: parse_statement(),
+          line: previous_line,
+        );
+      }
+    } else if (match(TokenType.IF)) {
+      final expr = parse_expression();
+      final stmt = parse_statement();
+      final if_kw = previous!;
+      final else_kw = previous!;
+      final line = previous_line;
+      return StmtConditional(
+        expr: expr,
+        stmt: stmt,
+        if_kw: if_kw,
+        line: line,
+        else_kw: else_kw,
+        other_maker: () {
+          if (match(TokenType.ELSE)) {
+            return parse_statement();
+          } else {
+            return null;
+          }
+        },
+      );
+    } else if (match(TokenType.WHILE)) {
+      return StmtWhil(
+        expr: parse_expression(),
+        stmt: parse_statement(),
+        exit_kw: previous!,
+        line: previous_line,
+      );
+    } else if (match(TokenType.LEFT_BRACE)) {
+      return StmtBlock(
+        block_maker: parse_decls,
+        line: previous_line,
+      );
+    } else if (match(TokenType.PRINT)) {
+      return StmtOutput(
+        expr: () {
+          final expr = parse_expression();
+          consume(TokenType.SEMICOLON, 'Expect a newline after value');
+          return expr;
+        }(),
+        line: previous_line,
+      );
+    } else if (match(TokenType.RETURN)) {
+      return StmtRet(
+        kw: previous!,
+        expr: () {
+          if (match(TokenType.SEMICOLON)) {
+            return null;
+          } else {
+            final expr = parse_expression();
+            consume(TokenType.SEMICOLON, 'Expect a newline after return value');
+            return expr;
+          }
+        }(),
+        line: previous_line,
+      );
+    } else {
+      return StmtExpr(
+        expr: () {
+          final expr = parse_expression();
+          consume(TokenType.SEMICOLON, 'Expect a newline after expression');
+          return expr;
+        }(),
+        line: previous_line,
+      );
+    }
+  }
+
+  Functiony parse_function_block() {
+    return Functiony(
+      name: () {
+        final name = previous!.lexeme;
+        consume(TokenType.LEFT_PAREN, "Expect '(' after function name");
+        return name;
+      }(),
+      args: () {
+        final args = <Token>[];
+        if (!check(TokenType.RIGHT_PAREN)) {
+          argloop:
+          for (;;) {
+            consume(TokenType.IDENTIFIER, 'Expect parameter name');
+            args.add(previous!);
+            if (match(TokenType.COMMA)) {
+              continue argloop;
+            } else {
+              break argloop;
+            }
+          }
+        }
+        consume(TokenType.RIGHT_PAREN, "Expect ')' after parameters");
+        consume(TokenType.LEFT_BRACE, 'Expect function body');
+        return args;
+      }(),
+      make_decls: (final new_compiler) => parse_decls(new_compiler).toList(),
+    );
+  }
+
+  Iterable<Declaration> parse_decls(
+    final Compiler compiler,
+  ) sync* {
+    for (;;) {
+      if (!check(TokenType.RIGHT_BRACE)) {
+        if (match(TokenType.EOF)) {
+          break;
+        } else {
+          yield parse_declaration(
+            compiler: compiler,
+          );
+        }
+      } else {
+        break;
+      }
+    }
+    consume(TokenType.RIGHT_BRACE, 'Unterminated block');
+  }
+
+  Declaration parse_decl(
+    final Compiler compiler,
+  ) {
+    if (match(TokenType.CLASS)) {
+      consume(TokenType.IDENTIFIER, 'Expect class name');
+      return DeclarationClazz(
+        name: previous!,
+        superclass_name: () {
+          if (match(TokenType.LESS)) {
+            consume(TokenType.IDENTIFIER, 'Expect superclass name');
+            return previous!;
+          } else {
+            return null;
+          }
+        }(),
+        make_functions: (final compiler) {
+          consume(TokenType.LEFT_BRACE, 'Expect class body');
+          final methods = <Method>[];
+          for (;;) {
+            if (check(TokenType.RIGHT_BRACE)) {
+              break;
+            } else if (check(TokenType.EOF)) {
+              break;
+            } else {
+              consume(TokenType.IDENTIFIER, 'Expect method name');
+              final name = previous!;
+              final functiony = parse_function_block();
+              final method = Method(
+                name: name,
+                block: functiony,
+                line: previous_line,
+              );
+              compiler.visit_method(method);
+              methods.add(method);
+            }
+          }
+          // TODO why can't i do this instead of above.
+          // for (final method in methods) {
+          //   compiler.visit_method(method);
+          // }
+          consume(TokenType.RIGHT_BRACE, 'Unterminated class body');
+          return methods;
+        },
+        line: previous_line,
+      );
+    } else if (match(TokenType.FUN)) {
+      consume(TokenType.IDENTIFIER, 'Expect function name');
+      return DeclarationFun(
+        name: previous!,
+        make_block: (final compiler) {
+          final functiony = parse_function_block();
+          compiler.visit_fn(
+            FunctionType.FUNCTION,
+            functiony,
+            previous_line,
+          );
+          return Block(
+            decls: functiony.decls,
+          );
+        },
+        line: previous_line,
+      );
+    } else if (match(TokenType.VAR)) {
+      return parse_var_declaration();
+    } else {
+      return DeclarationStmt(
+        stmt: parse_statement(),
+      );
+    }
+  }
+
+  Declaration parse_declaration({
+    required final Compiler compiler,
+  }) {
+    final decl = parse_decl(compiler);
+    // TODO why can't I compile after synchronization?
+    compiler.compile_declaration(decl);
+    synchronize();
+    return decl;
+  }
+
+  // TODO remove ast late fields once all split properly
+  @override
+  CompilationUnit parse_compilation_unit({
+    required final Compiler compiler,
+  }) {
+    return CompilationUnit(
+      decls: () sync* {
+        for (;;) {
+          if (match(TokenType.EOF)) {
+            break;
+          } else {
+            yield parse_declaration(
+              compiler: compiler,
+            );
+          }
+        }
+      }()
+          .toList(),
+    );
+  }
+
+  void synchronize() {
     if (panic_mode) {
       panic_mode = false;
       outer:
@@ -837,23 +831,13 @@ class _ParserImpl implements Parser, ErrorDelegate {
         }
       }
     }
-    return decl;
-  }
-
-  @override
-  bool is_eof() {
-    return match(TokenType.EOF);
   }
 }
 
 abstract class Parser {
   int get previous_line;
 
-  void advance();
-
-  bool is_eof();
-
-  Declaration parse_declaration({
+  CompilationUnit parse_compilation_unit({
     required final Compiler compiler,
   });
 }
@@ -861,12 +845,10 @@ abstract class Parser {
 abstract class ErrorDelegate {
   Debug get debug;
 
-  void error_at_previous(
+  // TODO replace token with line?
+  void error_at(
+    final Token token,
     final String message,
-  );
-
-  void error_at_current(
-    final String? message,
   );
 }
 

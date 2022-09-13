@@ -1,3 +1,4 @@
+// TODO remove
 import 'package:sprintf/sprintf.dart';
 
 import '../arrows/objfunction_to_output.dart';
@@ -10,7 +11,7 @@ import 'op_code.dart';
 mixin LangError {
   String get type;
 
-  NaturalToken? get token;
+  Token? get token;
 
   int? get line;
 
@@ -46,7 +47,7 @@ mixin LangError {
 
 class CompilerError with LangError {
   @override
-  final NaturalToken token;
+  final Token token;
   @override
   final String? msg;
 
@@ -69,9 +70,9 @@ class RuntimeError with LangError {
   @override
   final String? msg;
 
-  const RuntimeError(
-    final this.line,
-    final this.msg, {
+  const RuntimeError({
+    required final this.line,
+    required final this.msg,
     final this.link,
   });
 
@@ -132,10 +133,10 @@ class Debug {
     final String name,
   ) {
     stdwrite("==" + name + "==\n");
-    int? prevLine = -1;
-    for (var offset = 0; offset < chunk.code.length;) {
-      offset = disassemble_instruction(prevLine, chunk, offset);
-      prevLine = offset > 0 ? chunk.lines[offset - 1] : null;
+    int? prev_line = -1;
+    for (int offset = 0; offset < chunk.code.length;) {
+      offset = disassemble_instruction(prev_line, chunk, offset);
+      prev_line = offset > 0 ? chunk.lines[offset - 1] : null;
     }
   }
 
@@ -198,7 +199,7 @@ class Debug {
     final Chunk chunk,
     final int offset,
   ) {
-    var jump = chunk.code[offset + 1] << 8;
+    int jump = chunk.code[offset + 1] << 8;
     jump |= chunk.code[offset + 2];
     stdwrite(sprintf('%-16s %4d -> %d\n', [name, offset, offset + 3 + sign * jump]));
     return offset + 3;
@@ -442,6 +443,6 @@ String function_to_string(
   if (function.name == null) {
     return '<script>';
   } else {
-    return '<fn ${function.name}>';
+    return '<fn ' + function.name.toString() + '>';
   }
 }

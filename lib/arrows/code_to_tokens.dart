@@ -1,12 +1,12 @@
 import '../models/ast.dart';
 
-List<NaturalToken> run_lexer({
+List<Token> run_lexer({
   required final String source,
 }) {
   final lexer = _Lexer._(
     source: source,
   );
-  final tokens = <NaturalToken>[];
+  final tokens = <Token>[];
   for (;;) {
     tokens.add(lexer.scanToken());
     if (tokens.last.type == TokenType.EOF) {
@@ -77,16 +77,16 @@ class _Lexer {
     return true;
   }
 
-  NaturalToken makeToken(final TokenType type) {
+  Token makeToken(final TokenType type) {
     var str = source.substring(start, current);
     if (type == TokenType.STRING) str = str.substring(1, str.length - 1);
-    final token = NaturalTokenImpl(type: type, loc: loc, lexeme: str);
+    final token = TokenImpl(type: type, loc: loc, lexeme: str);
     loc = LocImpl(loc.line);
     return token;
   }
 
-  NaturalToken errorToken(final String message) {
-    return NaturalTokenImpl(type: TokenType.ERROR, loc: loc, lexeme: message);
+  Token errorToken(final String message) {
+    return TokenImpl(type: TokenType.ERROR, loc: loc, lexeme: message);
   }
 
   void skipWhitespace() {
@@ -186,7 +186,7 @@ class _Lexer {
     return TokenType.IDENTIFIER;
   }
 
-  NaturalToken identifier() {
+  Token identifier() {
     while (isAlpha(peek) || isDigit(peek)) {
       advance();
     }
@@ -194,7 +194,7 @@ class _Lexer {
     return makeToken(identifierType());
   }
 
-  NaturalToken number() {
+  Token number() {
     while (isDigit(peek)) {
       advance();
     }
@@ -209,7 +209,7 @@ class _Lexer {
     return makeToken(TokenType.NUMBER);
   }
 
-  NaturalToken string() {
+  Token string() {
     while (peek != '"' && !isAtEnd) {
       if (peek == '\n') {
         newLine();
@@ -225,7 +225,7 @@ class _Lexer {
     }
   }
 
-  NaturalToken comment() {
+  Token comment() {
     for (;;) {
       if (peek != "\n") {
         if (isAtEnd) {
@@ -240,7 +240,7 @@ class _Lexer {
     return makeToken(TokenType.COMMENT);
   }
 
-  NaturalToken scanToken() {
+  Token scanToken() {
     skipWhitespace();
     start = current;
     if (isAtEnd) return makeToken(TokenType.EOF);

@@ -1,3 +1,5 @@
+import '../compiler.dart';
+
 // region compilation unit
 class CompilationUnit {
   final List<Declaration> decls;
@@ -19,12 +21,17 @@ abstract class Declaration {
 }
 
 class DeclarationClazz implements Declaration {
-  final List<Method> functions;
-  final NaturalToken name;
+  final Token name;
+  final Token? superclass_name;
+  final List<Method> Function(Compiler) make_functions;
+  late final List<Method> functions;
+  final int line;
 
-  const DeclarationClazz({
-    required final this.functions,
+  DeclarationClazz({
     required final this.name,
+    required final this.superclass_name,
+    required final this.make_functions,
+    required final this.line,
   });
 
   @override
@@ -38,12 +45,15 @@ class DeclarationClazz implements Declaration {
 }
 
 class DeclarationFun implements Declaration {
-  final Block block;
-  final NaturalToken name;
+  final Block Function(Compiler) make_block;
+  late final Block block;
+  final Token name;
+  final int line;
 
-  const DeclarationFun({
-    required this.block,
+  DeclarationFun({
+    required this.make_block,
     required this.name,
+    required this.line,
   });
 
   @override
@@ -57,10 +67,12 @@ class DeclarationFun implements Declaration {
 }
 
 class DeclarationVari implements Declaration {
-  final List<Expr> exprs;
+  final List<MapEntry<Token, Expr>> exprs;
+  final int line;
 
   const DeclarationVari({
     required final this.exprs,
+    required final this.line,
   });
 
   @override
@@ -93,17 +105,32 @@ class DeclarationStmt implements Declaration {
 
 // region method
 class Method {
-  final NaturalToken name;
-  final Block block;
+  final Token name;
+  final Functiony block;
+  final int line;
 
   const Method({
     required final this.name,
     required final this.block,
+    required final this.line,
   });
 }
 // endregion
 
 // region block
+class Functiony {
+  final String name;
+  final List<Token> args;
+  final List<Declaration> Function(Compiler) make_decls;
+  late final List<Declaration> decls;
+
+  Functiony({
+    required final this.name,
+    required final this.args,
+    required final this.make_decls,
+  });
+}
+
 class Block {
   final List<Declaration> decls;
 
@@ -129,9 +156,11 @@ abstract class Stmt {
 
 class StmtOutput implements Stmt {
   final Expr expr;
+  final int line;
 
   const StmtOutput({
     required final this.expr,
+    required final this.line,
   });
 
   @override
@@ -152,12 +181,18 @@ class StmtLoop implements Stmt {
   final Expr? center;
   final Expr? right;
   final Stmt body;
+  final Token right_kw;
+  final Token end_kw;
+  final int line;
 
-  const StmtLoop({
+  StmtLoop({
     required final this.left,
     required final this.center,
     required final this.right,
+    required final this.right_kw,
     required final this.body,
+    required final this.end_kw,
+    required final this.line,
   });
 
   @override
@@ -174,16 +209,20 @@ class StmtLoop implements Stmt {
 }
 
 class StmtLoop2 implements Stmt {
-  final NaturalToken key_name;
-  final NaturalToken? value_name;
+  final Token key_name;
+  final Token? value_name;
   final Expr center;
   final Stmt body;
+  final Token exit_token;
+  final int line;
 
-  const StmtLoop2({
+  StmtLoop2({
     required final this.center,
-    required final this.body,
     required final this.key_name,
     required final this.value_name,
+    required final this.body,
+    required final this.exit_token,
+    required final this.line,
   });
 
   @override
@@ -202,12 +241,19 @@ class StmtLoop2 implements Stmt {
 class StmtConditional implements Stmt {
   final Expr expr;
   final Stmt stmt;
-  final Stmt? other;
+  final Stmt? Function() other_maker;
+  late final Stmt? other;
+  final Token if_kw;
+  final Token else_kw;
+  final int line;
 
-  const StmtConditional({
+  StmtConditional({
     required final this.expr,
     required final this.stmt,
-    required final this.other,
+    required final this.other_maker,
+    required final this.if_kw,
+    required final this.else_kw,
+    required final this.line,
   });
 
   @override
@@ -224,10 +270,14 @@ class StmtConditional implements Stmt {
 }
 
 class StmtRet implements Stmt {
+  final Token kw;
   final Expr? expr;
+  final int line;
 
   const StmtRet({
+    required final this.kw,
     required final this.expr,
+    required final this.line,
   });
 
   @override
@@ -246,10 +296,14 @@ class StmtRet implements Stmt {
 class StmtWhil implements Stmt {
   final Expr expr;
   final Stmt stmt;
+  final Token exit_kw;
+  final int line;
 
   const StmtWhil({
     required final this.expr,
     required final this.stmt,
+    required final this.exit_kw,
+    required final this.line,
   });
 
   @override
@@ -266,10 +320,13 @@ class StmtWhil implements Stmt {
 }
 
 class StmtBlock implements Stmt {
-  final Block block;
+  final Iterable<Declaration> Function(Compiler) block_maker;
+  late final List<Declaration> block;
+  final int line;
 
-  const StmtBlock({
-    required final this.block,
+  StmtBlock({
+    required final this.block_maker,
+    required final this.line,
   });
 
   @override
@@ -287,9 +344,11 @@ class StmtBlock implements Stmt {
 
 class StmtExpr implements Stmt {
   final Expr expr;
+  final int line;
 
   const StmtExpr({
     required this.expr,
+    required this.line,
   });
 
   @override
@@ -307,7 +366,12 @@ class StmtExpr implements Stmt {
 // endregion
 
 // region loop left
-abstract class LoopLeft {}
+abstract class LoopLeft {
+  R match<R>({
+    required final R Function(LoopLeftVari) vari,
+    required final R Function(LoopLeftExpr) expr,
+  });
+}
 
 class LoopLeftVari implements LoopLeft {
   final DeclarationVari decl;
@@ -315,6 +379,12 @@ class LoopLeftVari implements LoopLeft {
   const LoopLeftVari({
     required final this.decl,
   });
+
+  @override
+  R match<R>({
+    required final R Function(LoopLeftVari) vari,
+    required final R Function(LoopLeftExpr) expr,
+  }) => vari(this);
 }
 
 class LoopLeftExpr implements LoopLeft {
@@ -323,6 +393,12 @@ class LoopLeftExpr implements LoopLeft {
   const LoopLeftExpr({
     required final this.expr,
   });
+
+  @override
+  R match<R>({
+    required final R Function(LoopLeftVari) vari,
+    required final R Function(LoopLeftExpr) expr,
+  }) => expr(this);
 }
 // endregion
 
@@ -331,155 +407,216 @@ abstract class Expr {}
 
 class ExprMap implements Expr {
   final List<MapEntry<Expr, Expr>> entries;
+  final int line;
 
   const ExprMap({
     required final this.entries,
+    required final this.line,
   });
 }
 
 class ExprCall implements Expr {
   final List<Expr> args;
+  final int line;
 
   const ExprCall({
     required final this.args,
+    required final this.line,
   });
 }
 
 class ExprInvoke implements Expr {
   final List<Expr> args;
-  final NaturalToken name;
+  final Token name;
+  final int line;
 
   const ExprInvoke({
     required final this.args,
     required final this.name,
+    required final this.line,
   });
 }
 
 class ExprGet implements Expr {
-  final NaturalToken name;
+  final Token name;
+  final int line;
 
   const ExprGet({
     required final this.name,
+    required final this.line,
   });
 }
 
 class ExprSet implements Expr {
   final Expr arg;
-  final NaturalToken name;
+  final Token name;
+  final int line;
 
   const ExprSet({
     required final this.arg,
     required final this.name,
+    required final this.line,
   });
 }
 
 class ExprSet2 implements Expr {
   final Expr arg;
-  final NaturalToken name;
+  final Token name;
+  final int line;
 
   const ExprSet2({
     required final this.arg,
     required final this.name,
+    required final this.line,
   });
 }
 
 class ExprGetSet2 implements Expr {
-  late final Expr? arg;
-  final Expr Function()? arg_maker;
-  final NaturalToken name;
+  final Token name;
+  final Getset? child;
+  final int line;
 
-  ExprGetSet2({
-    required final this.arg_maker,
+  const ExprGetSet2({
+    required final this.child,
     required final this.name,
+    required final this.line,
   });
 }
 
-class ExprGet2 implements Expr {
-  final NaturalToken name;
+class Getset {
+  final Expr child;
+  final GetsetType type;
 
-  const ExprGet2({
-    required final this.name,
+  const Getset({
+    required final this.child,
+    required final this.type,
   });
+}
+
+enum GetsetType {
+  pluseq,
+  minuseq,
+  stareq,
+  slasheq,
+  poweq,
+  modeq,
 }
 
 class ExprList implements Expr {
   final List<Expr> values;
   final int val_count;
+  final int line;
 
   const ExprList({
     required final this.values,
     required final this.val_count,
+    required final this.line,
   });
 }
 
 class ExprNil implements Expr {
-  const ExprNil();
+  final int line;
+
+  const ExprNil({
+    required final this.line,
+  });
 }
 
 class ExprString implements Expr {
-  final NaturalToken token;
+  final Token token;
+  final int line;
 
   const ExprString({
     required final this.token,
+    required final this.line,
   });
 }
 
 class ExprNumber implements Expr {
-  final NaturalToken value;
+  final Token value;
+  final int line;
 
   const ExprNumber({
     required final this.value,
+    required final this.line,
   });
 }
 
 class ExprObject implements Expr {
-  const ExprObject();
+  final Token token;
+  final int line;
+
+  const ExprObject({
+    required final this.token,
+    required final this.line,
+  });
 }
 
 class ExprListGetter implements Expr {
   final Expr? first;
   final Expr? second;
+  final Token first_token;
+  final Token second_token;
+  final int line;
 
   const ExprListGetter({
     required final this.first,
+    required final this.first_token,
     required final this.second,
+    required final this.second_token,
+    required final this.line,
   });
 }
 
 class ExprListSetter implements Expr {
   final Expr? first;
   final Expr? second;
+  final Token token;
+  final int line;
 
   const ExprListSetter({
     required final this.first,
     required final this.second,
+    required final this.token,
+    required final this.line,
   });
 }
 
 class ExprSuperaccess implements Expr {
-  final NaturalToken kw;
-  late final List<Expr>? args;
-  final List<Expr> Function()? make_args;
+  final Token kw;
+  final List<Expr>? args;
+  final int line;
 
-  ExprSuperaccess({
+  const ExprSuperaccess({
     required final this.kw,
-    required final this.make_args,
+    required final this.args,
+    required final this.line,
   });
 }
 
 class ExprTruth implements Expr {
-  const ExprTruth();
+  final int line;
+
+  const ExprTruth({
+    required final this.line,
+  });
 }
 
 class ExprFalsity implements Expr {
-  const ExprFalsity();
+  final int line;
+
+  const ExprFalsity({
+    required final this.line,
+  });
 }
 
 class ExprSelf implements Expr {
-  final NaturalToken previous;
+  final Token previous;
+final   int line;
 
   const ExprSelf({
     required final this.previous,
+    required final this.line,
   });
 }
 
@@ -497,181 +634,168 @@ class ExprExpected implements Expr {
 
 class ExprNegated implements Expr {
   final Expr child;
+  final int line;
 
   const ExprNegated({
     required final this.child,
+    required final this.line,
   });
 }
 
 class ExprNot implements Expr {
   final Expr child;
+  final int line;
 
   const ExprNot({
     required final this.child,
+    required final this.line,
   });
 }
 
 class ExprMinus implements Expr {
   final Expr child;
+  final int line;
 
   const ExprMinus({
     required final this.child,
+    required final this.line,
   });
 }
 
 class ExprPlus implements Expr {
   final Expr child;
+  final int line;
 
   const ExprPlus({
     required final this.child,
+    required final this.line,
   });
 }
 
 class ExprSlash implements Expr {
   final Expr child;
+  final int line;
 
   const ExprSlash({
     required final this.child,
+    required final this.line,
   });
 }
 
 class ExprStar implements Expr {
   final Expr child;
+  final int line;
 
   const ExprStar({
     required final this.child,
+    required final this.line,
   });
 }
 
 class ExprAnd implements Expr {
-  final Expr Function() child_maker;
-  late final Expr child;
+  final Token token;
+  final Expr child;
+  final int line;
 
-  ExprAnd({
-    required final this.child_maker,
+  const ExprAnd({
+    required final this.token,
+    required final this.child,
+    required final this.line,
   });
 }
 
 class ExprOr implements Expr {
-  final Expr Function() child_maker;
-  late final Expr child;
+  final Token token;
+  final Expr child;
+  final int line;
 
-  ExprOr({
-    required final this.child_maker,
+  const ExprOr({
+    required final this.token,
+    required final this.child,
+    required final this.line,
   });
 }
 
 class ExprG implements Expr {
   final Expr child;
+  final int line;
 
   const ExprG({
     required final this.child,
+    required final this.line,
   });
 }
 
 class ExprGeq implements Expr {
   final Expr child;
+  final int line;
 
   const ExprGeq({
     required final this.child,
+    required final this.line,
   });
 }
 
 class ExprL implements Expr {
   final Expr child;
+  final int line;
 
   const ExprL({
     required final this.child,
+    required final this.line,
   });
 }
 
 class ExprLeq implements Expr {
   final Expr child;
+  final int line;
 
   const ExprLeq({
     required final this.child,
+    required final this.line,
   });
 }
 
 class ExprPow implements Expr {
   final Expr child;
+  final int line;
 
   const ExprPow({
     required final this.child,
+    required final this.line,
   });
 }
 
 class ExprModulo implements Expr {
   final Expr child;
+  final int line;
 
   const ExprModulo({
     required final this.child,
+    required final this.line,
   });
 }
 
 class ExprNeq implements Expr {
   final Expr child;
+  final int line;
 
   const ExprNeq({
     required final this.child,
+    required final this.line,
   });
 }
 
 class ExprEq implements Expr {
   final Expr child;
+  final int line;
 
   const ExprEq({
     required final this.child,
+    required final this.line,
   });
 }
 
-class ExprPluseq implements Expr {
-  final Expr child;
-
-  const ExprPluseq({
-    required final this.child,
-  });
-}
-
-class ExprMinuseq implements Expr {
-  final Expr child;
-
-  const ExprMinuseq({
-    required final this.child,
-  });
-}
-
-class ExprStareq implements Expr {
-  final Expr child;
-
-  const ExprStareq({
-    required final this.child,
-  });
-}
-
-class ExprSlasheq implements Expr {
-  final Expr child;
-
-  const ExprSlasheq({
-    required final this.child,
-  });
-}
-
-class ExprPoweq implements Expr {
-  final Expr child;
-
-  const ExprPoweq({
-    required final this.child,
-  });
-}
-
-class ExprModeq implements Expr {
-  final Expr child;
-
-  const ExprModeq({
-    required final this.child,
-  });
-}
 
 Z match_expr<Z>({
   required final Expr expr,
@@ -682,7 +806,6 @@ Z match_expr<Z>({
   required final Z Function(ExprSet) set,
   required final Z Function(ExprSet2) set2,
   required final Z Function(ExprGetSet2) getset2,
-  required final Z Function(ExprGet2) get2,
   required final Z Function(ExprList) list,
   required final Z Function(ExprNil) nil,
   required final Z Function(ExprString) string,
@@ -712,12 +835,6 @@ Z match_expr<Z>({
   required final Z Function(ExprModulo) modulo,
   required final Z Function(ExprNeq) neq,
   required final Z Function(ExprEq) eq,
-  required final Z Function(ExprPluseq) pluseq,
-  required final Z Function(ExprMinuseq) minuseq,
-  required final Z Function(ExprStareq) stareq,
-  required final Z Function(ExprSlasheq) slasheq,
-  required final Z Function(ExprPoweq) poweq,
-  required final Z Function(ExprModeq) modeq,
 }) {
   if (expr is ExprMap) return map(expr);
   if (expr is ExprMap) return map(expr);
@@ -728,7 +845,6 @@ Z match_expr<Z>({
   if (expr is ExprSet) return set(expr);
   if (expr is ExprSet2) return set2(expr);
   if (expr is ExprGetSet2) return getset2(expr);
-  if (expr is ExprGet2) return get2(expr);
   if (expr is ExprList) return list(expr);
   if (expr is ExprNil) return nil(expr);
   if (expr is ExprString) return string(expr);
@@ -758,122 +874,24 @@ Z match_expr<Z>({
   if (expr is ExprModulo) return modulo(expr);
   if (expr is ExprNeq) return neq(expr);
   if (expr is ExprEq) return eq(expr);
-  if (expr is ExprPluseq) return pluseq(expr);
-  if (expr is ExprMinuseq) return minuseq(expr);
-  if (expr is ExprStareq) return stareq(expr);
-  if (expr is ExprSlasheq) return slasheq(expr);
-  if (expr is ExprPoweq) return poweq(expr);
-  if (expr is ExprModeq) return modeq(expr);
   throw Exception("Invalid State");
 }
 // endregion
 
 // region token
-abstract class SyntheticToken {
+// TODO the compiler should not depend on this?
+// TODO  once parser and compilation are separate processes.
+abstract class Token {
   TokenType get type;
 
-  String? get lexeme;
-}
-
-// TODO the compiler should not depend on this?
-abstract class NaturalToken implements SyntheticToken {
   Loc get loc;
 
-  @override
   String get lexeme;
+
+  String get info;
 }
 
-enum TokenType {
-  // Single-char tokens.
-  LEFT_PAREN,
-  RIGHT_PAREN,
-  LEFT_BRACE,
-  RIGHT_BRACE,
-  LEFT_BRACK,
-  RIGHT_BRACK,
-  COMMA,
-  DOT,
-  MINUS,
-  PLUS,
-  SEMICOLON,
-  SLASH,
-  STAR,
-  COLON,
-  PERCENT,
-  CARET,
-
-  // One or two char tokens.
-  BANG,
-  BANG_EQUAL,
-  EQUAL,
-  EQUAL_EQUAL,
-  GREATER,
-  GREATER_EQUAL,
-  LESS,
-  LESS_EQUAL,
-
-  // Literals.
-  IDENTIFIER,
-  STRING,
-  NUMBER,
-  OBJECT,
-
-  // Keywords.
-  AND,
-  CLASS,
-  ELSE,
-  FALSE,
-  FOR,
-  FUN,
-  IF,
-  NIL,
-  OR,
-  PRINT,
-  RETURN,
-  SUPER,
-  THIS,
-  TRUE,
-  VAR,
-  WHILE,
-  IN,
-  BREAK, // TODO: add in dlox?
-  CONTINUE, // TODO: add in dlox?
-
-  // Editor syntactic sugar & helpers (dummy tokens)
-  ERROR,
-  COMMENT,
-  EOF,
-}
-
-// TODO migrate to an absolute offset and no line information.
-abstract class Loc {
-  int get line;
-}
-
-class SyntheticTokenImpl implements SyntheticToken {
-  @override
-  final TokenType type;
-  @override
-  final String? lexeme;
-
-  const SyntheticTokenImpl({
-    required final this.type,
-    required final this.lexeme,
-  });
-
-  @override
-  bool operator ==(final Object other) =>
-      identical(this, other) ||
-          other is SyntheticTokenImpl &&
-              runtimeType == other.runtimeType &&
-              type == other.type &&
-              lexeme == other.lexeme;
-
-  @override
-  int get hashCode => type.hashCode ^ lexeme.hashCode;
-}
-
-class NaturalTokenImpl implements NaturalToken {
+class TokenImpl implements Token {
   @override
   final TokenType type;
   @override
@@ -881,12 +899,13 @@ class NaturalTokenImpl implements NaturalToken {
   @override
   final Loc loc;
 
-  const NaturalTokenImpl({
+  const TokenImpl({
     required final this.type,
     required final this.lexeme,
     required final this.loc,
   });
 
+  @override
   String get info {
     return '<${toString()} at $loc>';
   }
@@ -909,7 +928,7 @@ class NaturalTokenImpl implements NaturalToken {
   @override
   bool operator ==(
       final Object o,
-      ) => o is NaturalToken && o.type == type && o.loc == loc && o.lexeme == lexeme;
+      ) => o is Token && o.type == type && o.loc == loc && o.lexeme == lexeme;
 
   @override
   int get hashCode => type.hashCode ^ loc.hashCode ^ lexeme.hashCode;
@@ -979,6 +998,73 @@ class NaturalTokenImpl implements NaturalToken {
   };
 }
 
+enum TokenType {
+  // Single-char tokens.
+  LEFT_PAREN,
+  RIGHT_PAREN,
+  LEFT_BRACE,
+  RIGHT_BRACE,
+  LEFT_BRACK,
+  RIGHT_BRACK,
+  COMMA,
+  DOT,
+  MINUS,
+  PLUS,
+  SEMICOLON,
+  SLASH,
+  STAR,
+  COLON,
+  PERCENT,
+  CARET,
+
+  // One or two char tokens.
+  BANG,
+  BANG_EQUAL,
+  EQUAL,
+  EQUAL_EQUAL,
+  GREATER,
+  GREATER_EQUAL,
+  LESS,
+  LESS_EQUAL,
+
+  // Literals.
+  IDENTIFIER,
+  STRING,
+  NUMBER,
+  OBJECT,
+
+  // Keywords.
+  AND,
+  CLASS,
+  ELSE,
+  FALSE,
+  FOR,
+  FUN,
+  IF,
+  NIL,
+  OR,
+  PRINT,
+  RETURN,
+  SUPER,
+  THIS,
+  TRUE,
+  VAR,
+  WHILE,
+  IN,
+  BREAK, // TODO: add in dlox?
+  CONTINUE, // TODO: add in dlox?
+
+  // Editor syntactic sugar & helpers (dummy tokens)
+  ERROR,
+  COMMENT,
+  EOF,
+}
+
+// TODO migrate to an absolute offset and no line information.
+abstract class Loc {
+  int get line;
+}
+
 class LocImpl implements Loc {
   @override
   final int line;
@@ -988,14 +1074,12 @@ class LocImpl implements Loc {
   );
 
   @override
-  String toString() {
-    return '$line';
-  }
+  String toString() => line.toString();
 
   @override
   bool operator ==(
-      final Object other,
-      ) {
+    final Object other,
+  ) {
     return (other is Loc) && other.line == line;
   }
 

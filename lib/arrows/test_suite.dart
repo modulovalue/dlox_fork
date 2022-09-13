@@ -54,18 +54,19 @@ abstract class DLoxTestSuite {
                   trace_bytecode: false,
                 );
                 // Compiler error
-                RegExp err_exp = RegExp(r'// Error at (.+):(.+)');
-                Iterable<RegExpMatch> err_matches = err_exp.allMatches(source);
-                Set<String> err_ref = err_matches.map((final e) {
+                final err_matches1 = RegExp(r'// Error at (.+):(.+)').allMatches(source);
+                final err_ref1 = err_matches1.map((final e) {
                   final line = line_number[e.start];
                   String msg = e.group(2)!.trim();
-                  if (msg.endsWith('.')) msg = msg.substring(0, msg.length - 1);
+                  if (msg.endsWith('.')) {
+                    msg = msg.substring(0, msg.length - 1);
+                  }
                   return line.toString() + ':' + msg;
                 }).toSet();
-                Set<String> err_list = debug.errors.map((final e) => '${e.token.loc.line}:${e.msg}').toSet();
+                final err_list1 = debug.errors.map((final e) => '${e.token.loc.line}:${e.msg}').toSet();
                 wrapper.run_test("test", (final test_context) {
-                  if (set_eq(err_ref, err_list)) {
-                    if (err_list.isEmpty) {
+                  if (set_eq(err_ref1, err_list1)) {
+                    if (err_list1.isEmpty) {
                       // Run test
                       vm.stdout.clear();
                       vm.set_function(
@@ -73,22 +74,24 @@ abstract class DLoxTestSuite {
                         debug.errors,
                         const FunctionParams(),
                       );
-                      final intepreter_result = vm.run();
+                      final interpreter_result = vm.run();
                       // Interpreter errors
-                      err_exp = RegExp(r'// Runtime error:(.+)');
-                      err_matches = err_exp.allMatches(source);
-                      err_ref = err_matches.map((final e) {
+                      final err_matches2 = RegExp(r'// Runtime error:(.+)').allMatches(source);
+                      final err_ref2 = err_matches2.map((final e) {
                         final line = line_number[e.start];
-                        String msg = e.group(1)!.trim();
-                        if (msg.endsWith('.')) msg = msg.substring(0, msg.length - 1);
-                        return '$line:$msg';
+                        final msg = e.group(1)!.trim();
+                        if (msg.endsWith('.')) {
+                          return '$line:' + msg.substring(0, msg.length - 1);
+                        } else {
+                          return '$line:' + msg;
+                        }
                       }).toSet();
-                      err_list = intepreter_result.errors
+                      final err_list2 = interpreter_result.errors
                           .map((final e) => '${e.line}:${e.msg}')
                           // filter out stack traces
                           .where((final el) => !el.contains(RegExp('during(.+)execution')))
                           .toSet();
-                      if (set_eq(err_ref, err_list)) {
+                      if (set_eq(err_ref2, err_list2)) {
                         // Extract test reqs
                         final rtn_exp = RegExp(r'// expect: (.+)');
                         final rtn_matches = rtn_exp.allMatches(source);
@@ -114,8 +117,8 @@ abstract class DLoxTestSuite {
                         return test_context.failed(
                           [
                             '$tab Runtime error mismatch',
-                            '$tab -> expected: $err_ref',
-                            '$tab -> got     : $err_list',
+                            '$tab -> expected: $err_ref2',
+                            '$tab -> got     : $err_list2',
                           ].join("\n"),
                         );
                       }
@@ -126,8 +129,8 @@ abstract class DLoxTestSuite {
                     return test_context.failed(
                       [
                         '$tab Compile error mismatch',
-                        '$tab -> expected: $err_ref',
-                        '$tab -> got: $err_list',
+                        '$tab -> expected: $err_ref1',
+                        '$tab -> got: $err_list1',
                       ].join("\n"),
                     );
                   }
@@ -166,7 +169,7 @@ abstract class DLoxTestSuite {
 }
 
 class DLoxTestSuiteDependencies {
-  final List<NaturalToken> Function(String) lexer;
+  final List<Token> Function(String) lexer;
   final Uri dlox_lib_path;
 
   const DLoxTestSuiteDependencies({

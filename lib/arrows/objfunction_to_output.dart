@@ -1,8 +1,6 @@
 import 'dart:collection';
 import 'dart:math';
 
-import 'package:sprintf/sprintf.dart';
-
 import '../models/errors.dart';
 import '../models/objfunction.dart';
 import '../models/op_code.dart';
@@ -37,40 +35,37 @@ class VM {
 
   VM({
     required final bool silent,
-  }) :
-    err_debug = Debug(
-      silent,
-    ),
-    trace_debug = Debug(
-      silent,
-    ),
-    stdout = Debug(
-      silent,
-    ) {
+  })  : err_debug = Debug(
+          silent,
+        ),
+        trace_debug = Debug(
+          silent,
+        ),
+        stdout = Debug(
+          silent,
+        ) {
     _reset();
     for (var k = 0; k < frames.length; k++) {
       frames[k] = CallFrame();
     }
   }
 
-  RuntimeError addError(
-    final String? msg, {
-    final RuntimeError? link,
-    final int? line,
+  RuntimeError add_error({
+    required final String? msg,
+    required final RuntimeError? link,
+    required final int line,
   }) {
-    // int line = -1;
-    // if (frameCount > 0) {
-    //   final frame = frames[frameCount - 1];
-    //   final lines = frame.chunk.lines;
-    //   if (frame.ip < lines.length) line = lines[frame.ip];
-    // }
-    final err = RuntimeError(line ?? this.line, msg, link: link);
+    final err = RuntimeError(
+      line: line,
+      msg: msg,
+      link: link,
+    );
     errors.add(err);
     err.dump(err_debug);
     return err;
   }
 
-  InterpreterResult getResult(
+  InterpreterResult get_result(
     final int line, {
     final Object? returnValue,
   }) {
@@ -83,14 +78,7 @@ class VM {
   }
 
   InterpreterResult get result {
-    return getResult(line);
-  }
-
-  InterpreterResult withError(
-    final String msg,
-  ) {
-    addError(msg);
-    return result;
+    return get_result(line);
   }
 
   void _reset() {
@@ -152,7 +140,7 @@ class VM {
       if (params.args != null) {
         params.args!.forEach(push);
       }
-      callValue(closure, params.args?.length ?? 0);
+      call_value(closure, params.args?.length ?? 0);
     }
   }
 
@@ -189,7 +177,7 @@ class VM {
     final int arg_count,
   ) {
     if (arg_count != closure.function.arity) {
-      runtime_error('Expected %d arguments but got %d', [closure.function.arity, arg_count]);
+      runtime_error('Expected ${closure.function.arity} arguments but got ${arg_count}');
       return false;
     } else {
       if (frame_count == FRAMES_MAX) {
@@ -206,7 +194,7 @@ class VM {
     }
   }
 
-  bool callValue(
+  bool call_value(
     final Object? callee,
     final int arg_count,
   ) {
@@ -219,7 +207,7 @@ class VM {
       if (initializer != null) {
         return call(initializer as ObjClosure, arg_count);
       } else if (arg_count != 0) {
-        runtime_error('Expected 0 arguments but got %d', [arg_count]);
+        runtime_error('Expected 0 arguments but got ' + arg_count.toString());
         return false;
       }
       return true;
@@ -236,7 +224,7 @@ class VM {
         stack_top -= arg_count + 1;
         push(res);
       } on NativeError catch (e) {
-        runtime_error(e.format, e.args);
+        runtime_error(e.format);
         return false;
       }
       return true;
@@ -253,14 +241,14 @@ class VM {
   ) {
     final method = klass.methods.get_val(name);
     if (method == null) {
-      runtime_error("Undefined property '%s'", [name]);
+      runtime_error("Undefined property '" + name.toString() + "'");
       return false;
     } else {
       return call(method as ObjClosure, arg_count);
     }
   }
 
-  bool invokeMap(
+  bool invoke_map(
     final Map<dynamic, dynamic> map,
     final String? name,
     final int arg_count,
@@ -276,7 +264,7 @@ class VM {
         push(rtn);
         return true;
       } on NativeError catch (e) {
-        runtime_error(e.format, e.args);
+        runtime_error(e.format);
         return false;
       }
     }
@@ -298,7 +286,7 @@ class VM {
         push(rtn);
         return true;
       } on NativeError catch (e) {
-        runtime_error(e.format, e.args);
+        runtime_error(e.format);
         return false;
       }
     }
@@ -320,7 +308,7 @@ class VM {
         push(rtn);
         return true;
       } on NativeError catch (e) {
-        runtime_error(e.format, e.args);
+        runtime_error(e.format);
         return false;
       }
     }
@@ -337,7 +325,7 @@ class VM {
       push(rtn);
       return true;
     } on NativeError catch (e) {
-      runtime_error(e.format, e.args);
+      runtime_error(e.format);
       return false;
     }
   }
@@ -350,7 +338,7 @@ class VM {
     if (receiver is List) {
       return invoke_list(receiver, name, arg_count);
     } else if (receiver is Map) {
-      return invokeMap(receiver, name, arg_count);
+      return invoke_map(receiver, name, arg_count);
     } else if (receiver is String) {
       return invoke_string(receiver, name, arg_count);
     } else if (receiver is ObjNativeClass) {
@@ -363,7 +351,7 @@ class VM {
       final value = instance.fields.get_val(name);
       if (value != null) {
         stack[stack_top - arg_count - 1] = value;
-        return callValue(value, arg_count);
+        return call_value(value, arg_count);
       } else {
         if (instance.klass == null) {
           final klass = globals.get_val(instance.klass_name);
@@ -384,7 +372,7 @@ class VM {
   ) {
     final method = klass.methods.get_val(name);
     if (method == null) {
-      runtime_error("Undefined property '%s'", [name]);
+      runtime_error("Undefined property '${name}'");
       return false;
     } else {
       final bound = ObjBoundMethod(
@@ -490,9 +478,16 @@ class VM {
     Object? idxObj, {
     final bool fromStart = true,
   }) {
-    // ignore: parameter_assignments
-    if (idxObj == Nil) idxObj = fromStart ? 0.0 : length.toDouble();
-    if (!(idxObj is double)) {
+    if (idxObj == Nil) {
+      if (fromStart) {
+        // ignore: parameter_assignments
+        idxObj = 0.0;
+      } else {
+        // ignore: parameter_assignments
+        idxObj = length.toDouble();
+      }
+    }
+    if (idxObj is! double) {
       runtime_error('Index must be a number');
       return null;
     } else {
@@ -525,7 +520,12 @@ class VM {
   }) {
     // Setup
     if (frame_count == 0) {
-      return withError('No call frame');
+      add_error(
+        msg: 'No call frame',
+        line: line,
+        link: null,
+      );
+      return result;
     } else {
       CallFrame? frame = frames[frame_count - 1];
       final stepCountLimit = step_count + batch_count;
@@ -542,7 +542,7 @@ class VM {
             // Newline detected, return
             // No need to set line to frameLine thanks to hasOp
             has_op = false;
-            return getResult(line);
+            return get_result(line);
           }
           // A line is worth stopping on if it has one of those opts
           has_op |= op != OpCode.POP && op != OpCode.LOOP && op != OpCode.JUMP;
@@ -588,30 +588,39 @@ class VM {
             stack[frame.slots_idx + slot] = peek(0);
             break;
           case OpCode.GET_GLOBAL:
-            final name = read_string(frame);
+            final name = read_string(frame)!;
             final value = globals.get_val(name);
             if (value == null) {
-              return runtime_error("Undefined variable '%s'", [name]);
+              return runtime_error("Undefined variable '" + name + "'");
+            } else {
+              push(value);
+              break;
             }
-            push(value);
-            break;
           case OpCode.DEFINE_GLOBAL:
             final name = read_string(frame);
             globals.set_val(name, peek(0));
             pop();
             break;
           case OpCode.SET_GLOBAL:
-            final name = read_string(frame);
+            final name = read_string(frame)!;
             if (globals.set_val(name, peek(0))) {
               globals.delete(name); // [delete]
-              return runtime_error("Undefined variable '%s'", [name]);
+              return runtime_error("Undefined variable '" + name + "'");
             } else {
               break;
             }
           case OpCode.GET_UPVALUE:
             final slot = read_byte(frame);
             final upvalue = frame.closure.upvalues[slot]!;
-            push(upvalue.location != null ? stack[upvalue.location!] : upvalue.closed);
+            push(
+              () {
+                if (upvalue.location != null) {
+                  return stack[upvalue.location!];
+                } else {
+                  return upvalue.closed;
+                }
+              }(),
+            );
             break;
           case OpCode.SET_UPVALUE:
             final slot = read_byte(frame);
@@ -625,19 +634,19 @@ class VM {
           case OpCode.GET_PROPERTY:
             Object? value;
             if (peek(0) is ObjInstance) {
-              final ObjInstance instance = (peek(0) as ObjInstance?)!;
+              final instance = (peek(0) as ObjInstance?)!;
               final name = read_string(frame);
               value = instance.fields.get_val(name);
               if (value == null && !bind_method(instance.klass!, name)) {
                 return result;
               }
             } else if (peek(0) is ObjNativeClass) {
-              final ObjNativeClass instance = (peek(0) as ObjNativeClass?)!;
+              final instance = (peek(0) as ObjNativeClass?)!;
               final name = read_string(frame);
               try {
                 value = instance.get_val(name);
               } on NativeError catch (e) {
-                return runtime_error(e.format, e.args);
+                return runtime_error(e.format);
               }
             } else {
               return runtime_error('Only instances have properties');
@@ -775,7 +784,7 @@ class VM {
             break;
           case OpCode.CALL:
             final arg_count = read_byte(frame);
-            if (!callValue(peek(arg_count), arg_count)) {
+            if (!call_value(peek(arg_count), arg_count)) {
               return result;
             } else {
               frame = frames[frame_count - 1];
@@ -825,7 +834,7 @@ class VM {
             // ignore: invariant_booleans
             if (frame_count == 0) {
               pop();
-              return getResult(line, returnValue: res);
+              return get_result(line, returnValue: res);
             } else {
               stack_top = frame.slots_idx;
               push(res);
@@ -994,18 +1003,31 @@ class VM {
   }
 
   InterpreterResult runtime_error(
-    final String format, [
-    final List<Object?>? args,
-  ]) {
-    RuntimeError error = addError(sprintf(format, args ?? []));
+    final String format,
+  ) {
+    RuntimeError error = add_error(
+      msg: format,
+      link: null,
+      line: line,
+    );
     for (int i = frame_count - 2; i >= 0; i--) {
       final frame = frames[i]!;
       final function = frame.closure.function;
       // frame.ip is sitting on the next instruction
       final line = function.chunk.lines[frame.ip - 1];
-      final fun = function.name == null ? '<script>' : '<${function.name}>';
+      final fun = () {
+        if (function.name == null) {
+          return '<script>';
+        } else {
+          return '<' + function.name.toString() + '>';
+        }
+      }();
       final msg = 'during $fun execution';
-      error = addError(msg, line: line, link: error);
+      error = add_error(
+        msg: msg,
+        line: line,
+        link: error,
+      );
     }
     return result;
   }
@@ -1165,8 +1187,7 @@ abstract class ObjNativeClass {
       throw NativeError('Undefined property $key');
     } else if (value.runtimeType != properties_types![key!]) {
       throw NativeError(
-        'Invalid object type, expected <%s>, but received <%s>',
-        [type_to_string(properties_types![key]), type_to_string(value.runtimeType)],
+        'Invalid object type, expected <${type_to_string(properties_types![key])}>, but received <${type_to_string(value.runtimeType)}>',
       );
     } else {
       properties[key] = value;
@@ -1293,13 +1314,11 @@ const Map<String, ObjNativeClass Function(List<Object>, int, int)> NATIVE_CLASSE
 
 // region native
 class NativeError implements Exception {
-  String format;
-  List<Object?>? args;
+  final String format;
 
-  NativeError(
-    final this.format, [
-    final this.args,
-  ]);
+  const NativeError(
+    final this.format,
+  );
 }
 
 String type_to_string(
@@ -1317,8 +1336,7 @@ void arg_count_error(
   final int? received,
 ) {
   throw NativeError(
-    'Expected %d arguments, but got %d',
-    [expected, received],
+    'Expected ${expected} arguments, but got ${received}',
   );
 }
 
@@ -1328,12 +1346,7 @@ void arg_type_error(
   final Type? received,
 ) {
   throw NativeError(
-    'Invalid argument %d type, expected <%s>, but received <%s>',
-    [
-      index + 1,
-      type_to_string(expected),
-      type_to_string(received),
-    ],
+    'Invalid argument ${index + 1} type, expected <${type_to_string(expected)}>, but received <${type_to_string(received)}>',
   );
 }
 
@@ -1599,7 +1612,7 @@ void list_insert(
   assert_types(stack, arg_idx, arg_count, [double, Object]);
   final idx = (stack[arg_idx] as double?)!.toInt();
   if (idx < 0 || idx > list.length) {
-    throw NativeError('Index %d out of bounds [0, %d]', [idx, list.length]);
+    throw NativeError('Index ${idx} out of bounds [0, ${list.length}]');
   } else {
     list.insert(idx, stack[arg_idx + 1]);
   }
@@ -1614,7 +1627,7 @@ Object? list_remove(
   assert_types(stack, arg_idx, arg_count, [double]);
   final idx = (stack[arg_idx] as double?)!.toInt();
   if (idx < 0 || idx > list.length) {
-    throw NativeError('Index %d out of bounds [0, %d]', [idx, list.length]);
+    throw NativeError('Index ${idx} out of bounds [0, ${list.length}]');
   } else {
     return list.removeAt(idx);
   }

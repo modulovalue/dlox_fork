@@ -1,3 +1,5 @@
+import 'op_code.dart';
+
 class ObjFunction {
   final String? name;
   final Chunk chunk;
@@ -25,6 +27,20 @@ class Chunk {
 
   int get count => code.length;
 
+  int add_constant(
+    final Object? value,
+  ) {
+    final idx = _constant_map[value];
+    if (idx != null) {
+      return idx;
+    } else {
+      constants.add(value);
+      _constant_map[value] = constants.length - 1;
+      return constants.length - 1;
+    }
+  }
+
+  // TODO hide once not referred to outside of this class.
   void write(
     final int byte,
     final int line,
@@ -33,19 +49,57 @@ class Chunk {
     lines.add(line);
   }
 
-  int add_constant(
-    final Object? value,
+  // region emitter
+  void emit_constant(
+    final int constant,
+    final int line,
   ) {
-    final idx = _constant_map[value];
-    if (idx != null) {
-      return idx;
-    } else {
-      // Add entry
-      constants.add(value);
-      _constant_map[value] = constants.length - 1;
-      return constants.length - 1;
-    }
+    write(OpCode.CONSTANT.index, line);
+    write(constant, line);
   }
+
+  void emit_loop(
+    final int offset,
+    final int line,
+  ) {
+    write(OpCode.LOOP.index, line);
+    write((offset >> 8) & 0xff, line);
+    write(offset & 0xff, line);
+  }
+
+  int emit_jump_if_false(
+    final int line,
+  ) {
+    write(OpCode.JUMP_IF_FALSE.index, line);
+    write(0xff, line);
+    write(0xff, line);
+    return count - 2;
+  }
+
+  int emit_jump(
+    final int line,
+  ) {
+    write(OpCode.JUMP.index, line);
+    write(0xff, line);
+    write(0xff, line);
+    return count - 2;
+  }
+
+  void emit_return_local(
+    final int line,
+  ) {
+    write(OpCode.GET_LOCAL.index, line);
+    write(0, line);
+    write(OpCode.RETURN.index, line);
+  }
+
+  void emit_return_nil(
+    final int line,
+  ) {
+    write(OpCode.NIL.index, line);
+    write(OpCode.RETURN.index, line);
+  }
+  // endregion
 }
 
 class ObjNative {
@@ -116,7 +170,11 @@ class ObjBoundMethod {
   });
 }
 
-typedef NativeFunction = Object? Function(List<Object?> stack, int arg_idx, int arg_count);
+typedef NativeFunction = Object? Function(
+  List<Object?> stack,
+  int arg_idx,
+  int arg_count,
+);
 
 class Nil {}
 

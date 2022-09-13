@@ -5,7 +5,7 @@ import 'models/op_code.dart';
 import 'parser.dart';
 
 ObjFunction run_dlox_compiler({
-  required final List<NaturalToken> tokens,
+  required final List<Token> tokens,
   required final Debug debug,
   required final bool trace_bytecode,
 }) {
@@ -19,7 +19,7 @@ ObjFunction run_dlox_compiler({
     error_delegate: parser.value,
     trace_bytecode: trace_bytecode,
   );
-  final compilation_unit = fn.key;
+  // final compilation_unit = fn.key;
   // TODO transform compilation unit to ObjFunction.
   return fn.value;
 }
@@ -33,27 +33,15 @@ MapEntry<CompilationUnit, ObjFunction> compile_dlox({
     function: ObjFunction(
       name: null,
     ),
-    line_provider: () => parser.previous_line,
     error_delegate: error_delegate,
     debug_trace_bytecode: trace_bytecode,
   );
-  final decls = <Declaration>[];
-  for (;;) {
-    if (parser.is_eof()) {
-      break;
-    } else {
-      decls.add(
-        parser.parse_declaration(
-          compiler: compiler,
-        ),
-      );
-    }
-  }
+  final compilation_unit = parser.parse_compilation_unit(
+    compiler: compiler,
+  );
   return MapEntry(
-    CompilationUnit(
-      decls: decls,
-    ),
-    compiler.end_compiler(),
+    compilation_unit,
+    compiler.compile(parser.previous_line),
   );
 }
 
@@ -74,13 +62,10 @@ class CompilerRootImpl with CompilerMixin {
   ClassCompiler? current_class;
   @override
   ObjFunction function;
-  @override
-  final int Function() line_provider;
 
   CompilerRootImpl({
     required final this.error_delegate,
     required final this.debug_trace_bytecode,
-    required final this.line_provider,
     required final this.function,
   })  : is_initializer = false,
         scope_depth = 0,
@@ -108,13 +93,10 @@ class CompilerWrappedImpl with CompilerMixin {
   ClassCompiler? current_class;
   @override
   ObjFunction function;
-  @override
-  final int Function() line_provider;
 
   CompilerWrappedImpl({
     required final this.is_initializer,
     required final this.enclosing,
-    required final this.line_provider,
     required final this.function,
     required final Local local,
   })  : current_class = enclosing.current_class,
@@ -134,134 +116,73 @@ class CompilerWrappedImpl with CompilerMixin {
 mixin CompilerMixin implements Compiler {
   abstract ClassCompiler? current_class;
 
+  abstract int scope_depth;
+
   ObjFunction get function;
 
   CompilerMixin? get enclosing;
 
   bool get debug_trace_bytecode;
 
-  abstract int scope_depth;
-
   List<Local> get locals;
 
   List<Upvalue> get upvalues;
-
-  int Function() get line_provider;
 
   ErrorDelegate get error_delegate;
 
   bool get is_initializer;
 
-  ObjFunction end_compiler() {
-    emit_return();
-    if (error_delegate.debug.errors.isEmpty && debug_trace_bytecode) {
-      error_delegate.debug.disassemble_chunk(current_chunk, function.name ?? '<script>');
-    }
-    if (enclosing != null) {
-      final _enclosing = enclosing!;
-      _enclosing.emit_byte(OpCode.CLOSURE.index);
-      _enclosing.emit_byte(_enclosing.make_constant(function));
-      for (final x in this.upvalues) {
-        _enclosing.emit_byte(
-          () {
-            if (x.is_local) {
-              return 1;
-            } else {
-              return 0;
-            }
-          }(),
-        );
-        _enclosing.emit_byte(x.index);
-      }
-      return function;
-    } else {
-      return function;
-    }
-  }
-
-  Chunk get current_chunk {
-    return function.chunk;
-  }
-
-  void emit_op(
-    final OpCode op,
-  ) {
-    emit_byte(op.index);
-  }
-
+  // region infrastructure
+  // TODO remove once chunk emitters are complete.
   void emit_byte(
     final int byte,
+    final int line_number,
   ) {
-    current_chunk.write(byte, line_provider());
+    function.chunk.write(byte, line_number);
   }
 
   void emit_loop(
-    final int loopStart,
+    final Token previous,
+    final int loop_start,
+    final int line,
   ) {
-    emit_op(OpCode.LOOP);
-    final offset = current_chunk.count - loopStart + 2;
+    final offset = function.chunk.count - loop_start + 3;
     if (offset > UINT16_MAX) {
-      error_delegate.error_at_previous('Loop body too large');
+      error_delegate.error_at(previous, 'Loop body too large');
     }
-    emit_byte((offset >> 8) & 0xff);
-    emit_byte(offset & 0xff);
-  }
-
-  int emit_jump(
-    final OpCode instruction,
-  ) {
-    emit_op(instruction);
-    emit_byte(0xff);
-    emit_byte(0xff);
-    return current_chunk.count - 2;
-  }
-
-  void emit_return() {
-    if (is_initializer) {
-      emit_byte(OpCode.GET_LOCAL.index);
-      emit_byte(0);
-    } else {
-      emit_op(OpCode.NIL);
-    }
-    emit_op(OpCode.RETURN);
+    function.chunk.emit_loop(offset, line);
   }
 
   int make_constant(
+    final Token token,
     final Object? value,
   ) {
-    final constant = current_chunk.add_constant(value);
+    final constant = function.chunk.add_constant(value);
     if (constant > UINT8_MAX) {
-      error_delegate.error_at_previous('Too many constants in one chunk');
+      error_delegate.error_at(token, 'Too many constants in one chunk');
       return 0;
     } else {
       return constant;
     }
   }
 
-  void emit_constant(
-    final Object? value,
-  ) {
-    emit_byte(OpCode.CONSTANT.index);
-    emit_byte(make_constant(value));
-  }
-
   void patch_jump(
+    final Token token,
     final int offset,
   ) {
-    // -2 to adjust for the bytecode for the jump offset itself.
-    final jump = current_chunk.count - offset - 2;
+    final jump = function.chunk.count - offset - 2;
     if (jump > UINT16_MAX) {
-      error_delegate.error_at_previous('Too much code to jump over');
+      error_delegate.error_at(token, 'Too much code to jump over');
     }
-    current_chunk.code[offset] = (jump >> 8) & 0xff;
-    current_chunk.code[offset + 1] = jump & 0xff;
+    function.chunk.code[offset] = (jump >> 8) & 0xff;
+    function.chunk.code[offset + 1] = jump & 0xff;
   }
 
   void add_local(
-    final SyntheticToken? name,
+    final Token name,
   ) {
     if (locals.length >= UINT8_COUNT) {
-      error_delegate.error_at_previous('Too many local variables in function');
+      error_delegate.error_at(name, 'Too many local variables in function');
     } else {
       locals.add(
         Local(
@@ -273,20 +194,14 @@ mixin CompilerMixin implements Compiler {
     }
   }
 
-  int identifier_constant(
-    final SyntheticToken name,
-  ) {
-    return make_constant(name.lexeme);
-  }
-
   int? resolve_local(
-    final SyntheticToken? name,
+    final Token name,
   ) {
     for (int i = locals.length - 1; i >= 0; i--) {
       final local = locals[i];
-      if (name!.lexeme == local.name!.lexeme) {
+      if (name.lexeme == local.name.lexeme) {
         if (!local.initialized) {
-          error_delegate.error_at_previous('Can\'t read local variable in its own initializer');
+          error_delegate.error_at(name, 'Can\'t read local variable in its own initializer');
         }
         return i;
       } else {
@@ -297,7 +212,7 @@ mixin CompilerMixin implements Compiler {
   }
 
   int add_upvalue(
-    final SyntheticToken? name,
+    final Token name,
     final int index,
     final bool is_local,
   ) {
@@ -314,7 +229,7 @@ mixin CompilerMixin implements Compiler {
       }
     }
     if (upvalues.length == UINT8_COUNT) {
-      error_delegate.error_at_previous('Too many closure variables in function');
+      error_delegate.error_at(name, 'Too many closure variables in function');
       return 0;
     } else {
       upvalues.add(
@@ -329,7 +244,7 @@ mixin CompilerMixin implements Compiler {
   }
 
   int? resolve_upvalue(
-    final SyntheticToken name,
+    final Token name,
   ) {
     if (enclosing == null) {
       return null;
@@ -359,20 +274,20 @@ mixin CompilerMixin implements Compiler {
 
   void define_variable(
     final int global, {
-    final NaturalToken? token,
+    required final int line,
     final int peek_dist = 0,
   }) {
     final is_local = scope_depth > 0;
     if (is_local) {
       mark_local_variable_initialized();
     } else {
-      emit_byte(OpCode.DEFINE_GLOBAL.index);
-      emit_byte(global);
+      emit_byte(OpCode.DEFINE_GLOBAL.index, line);
+      emit_byte(global, line);
     }
   }
 
   void declare_local_variable(
-    final NaturalToken name,
+    final Token name,
   ) {
     // Global variables are implicitly declared.
     if (scope_depth != 0) {
@@ -381,1207 +296,745 @@ mixin CompilerMixin implements Compiler {
         if (local.depth != -1 && local.depth < scope_depth) {
           break; // [negative]
         }
-        if (name.lexeme == local.name!.lexeme) {
-          error_delegate.error_at_previous('Already variable with this name in this scope');
+        if (name.lexeme == local.name.lexeme) {
+          error_delegate.error_at(name, 'Already variable with this name in this scope');
         }
       }
       add_local(name);
     }
   }
 
-  MapEntry<int, MapEntry<OpCode, OpCode>> get_or_set2(
-    final SyntheticToken name,
-  ) {
-    int? arg = resolve_local(name);
-    OpCode get_op;
-    OpCode set_op;
-    if (arg == null) {
-      final resolved_arg = resolve_upvalue(name);
-      if (resolved_arg == null) {
-        arg = identifier_constant(name);
-        get_op = OpCode.GET_GLOBAL;
-        set_op = OpCode.SET_GLOBAL;
-      } else {
-        arg = resolved_arg;
-        get_op = OpCode.GET_UPVALUE;
-        set_op = OpCode.SET_UPVALUE;
-      }
-    } else {
-      get_op = OpCode.GET_LOCAL;
-      set_op = OpCode.SET_LOCAL;
-    }
-    return MapEntry(
-      arg,
-      MapEntry(
-        get_op,
-        set_op,
-      ),
-    );
-  }
-
-  T wrap_in_scope<T>({
-    required final T Function() fn,
-  }) {
-    scope_depth++;
-    final val = fn();
-    scope_depth--;
-    while (locals.isNotEmpty && locals.last.depth > scope_depth) {
-      if (locals.last.is_captured) {
-        emit_op(OpCode.CLOSE_UPVALUE);
-      } else {
-        emit_op(OpCode.POP);
-      }
-      locals.removeLast();
-    }
-    return val;
-  }
-
   int make_variable(
-    final NaturalToken name,
+    final Token name,
   ) {
     if (scope_depth > 0) {
       declare_local_variable(name);
       return 0;
     } else {
-      return identifier_constant(name);
+      return make_constant(name, name.lexeme);
     }
   }
+  // endregion
 
-  @override
-  void visit_print_post() {
-    emit_op(OpCode.PRINT);
-  }
-
-  @override
-  void visit_set_post(
-    final SyntheticToken name,
-  ) {
-    final data = get_or_set2(name);
-    emit_byte(data.value.value.index);
-    emit_byte(data.key);
-  }
-
-  @override
-  MapEntry<int, OpCode> visit_getter_pre(
-    final SyntheticToken name,
-  ) {
-    final data = get_or_set2(name);
-    emit_byte(data.value.key.index);
-    emit_byte(data.key);
-    return MapEntry(data.key, data.value.value);
-  }
-
-  @override
-  void visit_get_post(
-    final SyntheticToken name,
-  ) {
-    visit_getter_pre(name);
-  }
-
-  @override
-  R visit_while<E, S, R>(
-    final E Function() expression,
-    final S Function() statement,
-    final R Function(E expr, S stmt) make,
-  ) {
-    final loop_start = current_chunk.count;
-    final expr = expression();
-    final exit_jump = emit_jump(OpCode.JUMP_IF_FALSE);
-    emit_op(OpCode.POP);
-    final stmt = statement();
-    emit_loop(loop_start);
-    patch_jump(exit_jump);
-    emit_op(OpCode.POP);
-    return make(expr, stmt);
-  }
-
-  @override
-  void visit_expr_stmt_post() {
-    emit_op(OpCode.POP);
-  }
-
-  @override
-  void visit_return_empty_post() {
-    emit_return();
-  }
-
-  @override
-  T visit_return_expr<T>(
-    final T Function() expression,
+  ObjFunction end_compiler(
+    final int line,
   ) {
     if (is_initializer) {
-      error_delegate.error_at_previous("Can't return a value from an initializer");
-    }
-    final expr = expression();
-    emit_op(OpCode.RETURN);
-    return expr;
-  }
-
-  @override
-  R visit_if<E, S, R>(
-    final E Function() condition,
-    final S Function() body,
-    final S? Function() other,
-    final R Function(E, S, S?) make,
-  ) {
-    final expr = condition();
-    final then_jump = emit_jump(OpCode.JUMP_IF_FALSE);
-    emit_op(OpCode.POP);
-    final stmt = body();
-    final else_jump = emit_jump(OpCode.JUMP);
-    patch_jump(then_jump);
-    emit_op(OpCode.POP);
-    final elsee = other();
-    patch_jump(else_jump);
-    return make(expr, stmt, elsee);
-  }
-
-  @override
-  R visit_iter_for<E, S, R>({
-    required final NaturalToken key_name,
-    required final NaturalToken? value_name,
-    required final E Function() iterable,
-    required final S Function() body,
-    required final R Function(E iterable, S body) make,
-  }) {
-    return wrap_in_scope(
-      fn: () {
-        make_variable(key_name);
-        emit_op(OpCode.NIL);
-        define_variable(0, token: key_name); // Remove 0
-        final stack_idx = locals.length - 1;
-        if (value_name != null) {
-          make_variable(value_name);
-          emit_op(OpCode.NIL);
-          define_variable(0, token: value_name);
-        } else {
-          add_local(
-            const SyntheticTokenImpl(
-              type: TokenType.IDENTIFIER,
-              lexeme: '_for_val_',
-            ),
-          );
-          emit_constant(0); // Emit a zero to permute val & key
-          mark_local_variable_initialized();
-        }
-        // Now add two dummy local variables. Idx & entries
-        add_local(
-          const SyntheticTokenImpl(
-            type: TokenType.IDENTIFIER,
-            lexeme: '_for_idx_',
-          ),
-        );
-        emit_op(OpCode.NIL);
-        mark_local_variable_initialized();
-        add_local(
-          const SyntheticTokenImpl(
-            type: TokenType.IDENTIFIER,
-            lexeme: '_for_iterable_',
-          ),
-        );
-        emit_op(OpCode.NIL);
-        mark_local_variable_initialized();
-        final _iterable = iterable();
-        final loop_start = current_chunk.count;
-        emit_byte(OpCode.CONTAINER_ITERATE.index);
-        emit_byte(stack_idx);
-        final exit_jump = emit_jump(OpCode.JUMP_IF_FALSE);
-        emit_op(OpCode.POP); // Condition
-        final _body = body();
-        emit_loop(loop_start);
-        patch_jump(exit_jump);
-        emit_op(OpCode.POP); // Condition
-        return make(
-          _iterable,
-          _body,
-        );
-      },
-    );
-  }
-
-  @override
-  List<T> visit_var_decl<T>(
-    final Iterable<MapEntry<NaturalToken, T Function()>> Function() fn,
-  ) {
-    final exprs = <T>[];
-    for (final x in fn()) {
-      final global = make_variable(x.key);
-      final made = x.value();
-      exprs.add(made);
-      define_variable(global, token: x.key);
-    }
-    return exprs;
-  }
-
-  @override
-  R visit_classic_for<L, E, S, R>(
-    final L? Function() left,
-    final E? Function() center,
-    final E Function()? Function() expr,
-    final S Function() stmt,
-    final R Function(L?, E?, E?, S) make,
-  ) {
-    return wrap_in_scope(
-      fn: () {
-        final _left = left();
-        int loop_start = current_chunk.count;
-        int exit_jump = -1;
-        final _center = () {
-          final _center = center();
-          if (_center != null) {
-            exit_jump = emit_jump(OpCode.JUMP_IF_FALSE);
-            emit_op(OpCode.POP); // Condition.
-          }
-          return _center;
-        }();
-        final _right = () {
-          final _right = expr();
-          if (_right == null) {
-            return null;
-          } else {
-            final body_jump = emit_jump(OpCode.JUMP);
-            final increment_start = current_chunk.count;
-            final _expr = _right();
-            emit_op(OpCode.POP);
-            emit_loop(loop_start);
-            loop_start = increment_start;
-            patch_jump(body_jump);
-            return _expr;
-          }
-        }();
-        final _stmt = stmt();
-        emit_loop(loop_start);
-        if (exit_jump != -1) {
-          patch_jump(exit_jump);
-          emit_op(OpCode.POP); // Condition.
-        }
-        return make(
-          _left,
-          _center,
-          _right,
-          _stmt,
-        );
-      },
-    );
-  }
-
-  @override
-  T visit_fun<T>(
-    final NaturalToken name,
-    final T Function() block,
-  ) {
-    final global = make_variable(name);
-    mark_local_variable_initialized();
-    final _block = block();
-    define_variable(global, token: name);
-    return _block;
-  }
-
-  @override
-  void visit_nil_post() {
-    emit_op(OpCode.NIL);
-  }
-
-  @override
-  void visit_set_prop_post(
-    final NaturalToken name,
-  ) {
-    final _name = identifier_constant(name);
-    emit_byte(OpCode.SET_PROPERTY.index);
-    emit_byte(_name);
-  }
-
-  @override
-  void visit_invoke_post(
-    final NaturalToken name_token,
-    final int length,
-  ) {
-    final name = identifier_constant(name_token);
-    emit_byte(OpCode.INVOKE.index);
-    emit_byte(name);
-    emit_byte(length);
-  }
-
-  int visit_super_pre(
-    final NaturalToken name_token,
-  ) {
-    if (current_class == null) {
-      error_delegate.error_at_previous("Can't use 'super' outside of a class");
-    } else if (!current_class!.has_superclass) {
-      error_delegate.error_at_previous("Can't use 'super' in a class with no superclass");
-    }
-    final name = identifier_constant(name_token);
-    visit_getter_pre(
-      const SyntheticTokenImpl(
-        type: TokenType.IDENTIFIER,
-        lexeme: 'this',
-      ),
-    );
-    return name;
-  }
-  @override
-  List<T>? visit_super<T>(
-    final NaturalToken name_token,
-    final List<T>? Function() args,
-  ) {
-    final name = visit_super_pre(name_token);
-    final _args = args();
-    visit_getter_pre(
-      const SyntheticTokenImpl(
-        type: TokenType.IDENTIFIER,
-        lexeme: 'super',
-      ),
-    );
-    if (_args != null) {
-      emit_byte(OpCode.SUPER_INVOKE.index);
-      emit_byte(name);
-      emit_byte(_args.length);
+      function.chunk.emit_return_local(line);
     } else {
-      emit_byte(OpCode.GET_SUPER.index);
-      emit_byte(name);
+      function.chunk.emit_return_nil(line);
     }
-    return _args;
+    if (error_delegate.debug.errors.isEmpty && debug_trace_bytecode) {
+      error_delegate.debug.disassemble_chunk(function.chunk, function.name ?? '<script>');
+    }
+    if (enclosing != null) {
+      final _enclosing = enclosing!;
+      _enclosing.emit_byte(OpCode.CLOSURE.index, line);
+      _enclosing.emit_byte(
+        _enclosing.make_constant(
+          const TokenImpl(type: TokenType.IDENTIFIER, lexeme: "INVALID", loc: LocImpl(-1)),
+          function,
+        ),
+        line,
+      );
+      for (final x in this.upvalues) {
+        _enclosing.emit_byte(
+              () {
+            if (x.is_local) {
+              return 1;
+            } else {
+              return 0;
+            }
+          }(),
+          line,
+        );
+        _enclosing.emit_byte(x.index, line);
+      }
+      return function;
+    } else {
+      return function;
+    }
   }
 
   @override
-  void visit_truth_post() {
-    emit_op(OpCode.TRUE);
-  }
-
-  @override
-  void visit_falsity_post() {
-    emit_op(OpCode.FALSE);
-  }
-
-  @override
-  B visit_fn<D, B>(
-    final String Function() name,
+  void visit_fn(
     final FunctionType type,
-    final List<NaturalToken> Function() args,
-    final B Function(D Function() declaration) block,
-    final D Function(Compiler compiler) declaration,
+    final Functiony block,
+    final int line,
   ) {
     final new_compiler = CompilerWrappedImpl(
       function: ObjFunction(
-        name: name(),
+        name: block.name,
       ),
       is_initializer: type == FunctionType.INITIALIZER,
       local: init_local(type != FunctionType.FUNCTION),
       enclosing: this,
-      line_provider: line_provider,
     );
-    final _args = args();
-    for (final name in _args) {
+    for (final name in block.args) {
       new_compiler.function.arity++;
       if (new_compiler.function.arity > 255) {
-        new_compiler.error_delegate.error_at_current("Can't have more than 255 parameters");
+        new_compiler.error_delegate.error_at(name, "Can't have more than 255 parameters");
       }
       new_compiler.make_variable(name);
       new_compiler.mark_local_variable_initialized();
     }
-    for (int k = 0; k < _args.length; k++) {
-      new_compiler.define_variable(0, token: _args[k], peek_dist: _args.length - 1 - k);
+    for (int k = 0; k < block.args.length; k++) {
+      new_compiler.define_variable(0, peek_dist: block.args.length - 1 - k, line: line);
     }
-    final _block = block(() => declaration(new_compiler));
-    new_compiler.end_compiler();
-    return _block;
+    block.decls = block.make_decls(new_compiler);
+    new_compiler.end_compiler(line);
   }
 
   @override
-  List<T> visit_class<T, B>(
-    final NaturalToken class_name,
-    final NaturalToken Function() before_class_name,
-    final NaturalToken? Function() superclass,
-    final List<T> Function(
-      T Function(
-        NaturalToken,
-        B Function(
-          bool true_init_false_method,
+  void visit_method(
+    final Method a,
+  ) {
+    visit_fn(
+      () {
+        if (a.name.lexeme == 'init') {
+          return FunctionType.INITIALIZER;
+        } else {
+          return FunctionType.METHOD;
+        }
+      }(),
+      a.block,
+      a.line,
+    );
+    final line = a.line;
+    emit_byte(OpCode.METHOD.index, line);
+    emit_byte(make_constant(a.name, a.name.lexeme), line);
+  }
+
+  @override
+  void compile_declaration(
+    final Declaration decl,
+  ) {
+    MapEntry<int, MapEntry<OpCode, OpCode>> get_or_set(
+      final Token name,
+    ) {
+      int? arg = resolve_local(name);
+      OpCode get_op;
+      OpCode set_op;
+      if (arg == null) {
+        final resolved_arg = resolve_upvalue(name);
+        if (resolved_arg == null) {
+          arg = make_constant(name, name.lexeme);
+          get_op = OpCode.GET_GLOBAL;
+          set_op = OpCode.SET_GLOBAL;
+        } else {
+          arg = resolved_arg;
+          get_op = OpCode.GET_UPVALUE;
+          set_op = OpCode.SET_UPVALUE;
+        }
+      } else {
+        get_op = OpCode.GET_LOCAL;
+        set_op = OpCode.SET_LOCAL;
+      }
+      return MapEntry(
+        arg,
+        MapEntry(
+          get_op,
+          set_op,
         ),
-      )
-          fn,
-    )
-        methods,
-    final T Function(
-      NaturalToken name,
-      B block,
-    )
-        make_method,
-  ) {
-    final name_constant = identifier_constant(class_name);
-    declare_local_variable(class_name);
-    emit_byte(OpCode.CLASS.index);
-    emit_byte(name_constant);
-    define_variable(name_constant);
-    final class_compiler = ClassCompiler(
-      enclosing: current_class,
-      name: before_class_name(),
-      has_superclass: false,
-    );
-    current_class = class_compiler;
-    return wrap_in_scope(
-      fn: () {
-        final superclass_name = superclass();
-        if (superclass_name != null) {
-          final class_name = current_class!.name!;
-          visit_getter_pre(superclass_name);
-          if (class_name.lexeme == superclass_name.lexeme) {
-            error_delegate.error_at_previous("A class can't inherit from itself");
+      );
+    }
+
+    MapEntry<int, OpCode> visit_getter(
+      final Token name,
+      final int line,
+    ) {
+      final data = get_or_set(name);
+      emit_byte(data.value.key.index, line);
+      emit_byte(data.key, line);
+      return MapEntry(data.key, data.value.value);
+    }
+
+    void compile_expr(
+      final Expr expr,
+    ) {
+      final self = compile_expr;
+      match_expr<void>(
+        expr: expr,
+        string: (final a) {
+          final line = a.line;
+          function.chunk.emit_constant(make_constant(a.token, a.token.lexeme), line);
+        },
+        number: (final a) {
+          final value = double.tryParse(a.value.lexeme);
+          if (value == null) {
+            error_delegate.error_at(a.value, 'Invalid number');
+          } else {
+            final line = a.line;
+            function.chunk.emit_constant(make_constant(a.value, value), line);
           }
-          add_local(
-            const SyntheticTokenImpl(
-              type: TokenType.IDENTIFIER,
-              lexeme: 'super',
-            ),
+        },
+        object: (final a) {
+          final line = a.line;
+          function.chunk.emit_constant(make_constant(a.token, null), line);
+        },
+        self: (final a) {
+          if (current_class == null) {
+            error_delegate.error_at(a.previous, "Can't use 'this' outside of a class");
+          } else {
+            visit_getter(a.previous, a.line);
+          }
+        },
+        nil: (final a) {
+          emit_byte(OpCode.NIL.index, a.line);
+        },
+        falsity: (final a) {
+          emit_byte(OpCode.FALSE.index, a.line);
+        },
+        truth: (final a) {
+          emit_byte(OpCode.TRUE.index, a.line);
+        },
+        get: (final a) {
+          final name = make_constant(a.name, a.name.lexeme);
+          final line = a.line;
+          emit_byte(OpCode.GET_PROPERTY.index, line);
+          emit_byte(name, line);
+        },
+        set2: (final a) {
+          self(a.arg);
+          final data = get_or_set(a.name);
+          final line = a.line;
+          emit_byte(data.value.value.index, line);
+          emit_byte(data.key, line);
+        },
+        negated: (final a) {
+          self(a.child);
+          emit_byte(OpCode.NEGATE.index, a.line);
+        },
+        not: (final a) {
+          self(a.child);
+          emit_byte(OpCode.NOT.index, a.line);
+        },
+        call: (final a) {
+          for (final x in a.args) {
+            self(x);
+          }
+          final line = a.line;
+          emit_byte(OpCode.CALL.index, line);
+          emit_byte(a.args.length, line);
+        },
+        set: (final a) {
+          self(a.arg);
+          final line = a.line;
+          emit_byte(OpCode.SET_PROPERTY.index, line);
+          emit_byte(make_constant(a.name, a.name.lexeme), line);
+        },
+        invoke: (final a) {
+          for (final x in a.args) {
+            self(x);
+          }
+          final line = a.line;
+          emit_byte(OpCode.INVOKE.index, line);
+          emit_byte(make_constant(a.name, a.name.lexeme), line);
+          emit_byte(a.args.length, line);
+        },
+        map: (final a) {
+          for (final x in a.entries) {
+            self(x.key);
+            self(x.value);
+          }
+          final line = a.line;
+          emit_byte(OpCode.MAP_INIT.index, line);
+          emit_byte(a.entries.length, line);
+        },
+        list: (final a) {
+          for (final x in a.values) {
+            self(x);
+          }
+          final line = a.line;
+          if (a.val_count >= 0) {
+            emit_byte(OpCode.LIST_INIT.index, line);
+            emit_byte(a.val_count, line);
+          } else {
+            emit_byte(OpCode.LIST_INIT_RANGE.index, line);
+          }
+        },
+        minus: (final a) {
+          self(a.child);
+          emit_byte(OpCode.SUBTRACT.index, a.line);
+        },
+        plus: (final a) {
+          self(a.child);
+          emit_byte(OpCode.ADD.index, a.line);
+        },
+        slash: (final a) {
+          self(a.child);
+          emit_byte(OpCode.DIVIDE.index, a.line);
+        },
+        star: (final a) {
+          self(a.child);
+          emit_byte(OpCode.MULTIPLY.index, a.line);
+        },
+        g: (final a) {
+          self(a.child);
+          emit_byte(OpCode.GREATER.index, a.line);
+        },
+        geq: (final a) {
+          self(a.child);
+          final line = a.line;
+          emit_byte(OpCode.LESS.index, line);
+          emit_byte(OpCode.NOT.index, line);
+        },
+        l: (final a) {
+          self(a.child);
+          emit_byte(OpCode.LESS.index, a.line);
+        },
+        leq: (final a) {
+          self(a.child);
+          final line = a.line;
+          emit_byte(OpCode.GREATER.index, line);
+          emit_byte(OpCode.NOT.index, line);
+        },
+        pow: (final a) {
+          self(a.child);
+          emit_byte(OpCode.POW.index, a.line);
+        },
+        modulo: (final a) {
+          self(a.child);
+          emit_byte(OpCode.MOD.index, a.line);
+        },
+        neq: (final a) {
+          self(a.child);
+          final line = a.line;
+          emit_byte(OpCode.EQUAL.index, line);
+          emit_byte(OpCode.NOT.index, line);
+        },
+        eq: (final a) {
+          self(a.child);
+          emit_byte(OpCode.EQUAL.index, a.line);
+        },
+        expected: (final a) {},
+        getset2: (final a) {
+          final arg = a.child;
+          final line = a.line;
+          final data = visit_getter(a.name, line);
+          if (arg != null) {
+            switch (arg.type) {
+              case GetsetType.pluseq:
+                self(arg.child);
+                emit_byte(OpCode.ADD.index, line);
+                emit_byte(data.value.index, line);
+                emit_byte(data.key, line);
+                break;
+              case GetsetType.minuseq:
+                self(arg.child);
+                emit_byte(OpCode.SUBTRACT.index, line);
+                emit_byte(data.value.index, line);
+                emit_byte(data.key, line);
+                break;
+              case GetsetType.stareq:
+                self(arg.child);
+                emit_byte(OpCode.MULTIPLY.index, line);
+                emit_byte(data.value.index, line);
+                emit_byte(data.key, line);
+                break;
+              case GetsetType.slasheq:
+                self(arg.child);
+                emit_byte(OpCode.DIVIDE.index, line);
+                emit_byte(data.value.index, line);
+                emit_byte(data.key, line);
+                break;
+              case GetsetType.poweq:
+                self(arg.child);
+                emit_byte(OpCode.POW.index, line);
+                emit_byte(data.value.index, line);
+                emit_byte(data.key, line);
+                break;
+              case GetsetType.modeq:
+                self(arg.child);
+                emit_byte(OpCode.MOD.index, line);
+                emit_byte(data.value.index, line);
+                emit_byte(data.key, line);
+                break;
+            }
+          }
+        },
+        and: (final a) {
+          final line = a.line;
+          final end_jump = function.chunk.emit_jump_if_false(
+            line,
           );
-          define_variable(0);
-          visit_getter_pre(class_name);
-          emit_op(OpCode.INHERIT);
-          current_class!.has_superclass = true;
-        }
-        visit_getter_pre(class_name);
-        final functions = methods(
-          (final name, final make_block) {
-            final constant = identifier_constant(name);
-            final block = make_block(
-              () {
-                if (name.lexeme == 'init') {
-                  return true;
-                } else {
-                  return false;
-                }
-              }(),
-            );
-            emit_byte(OpCode.METHOD.index);
-            emit_byte(constant);
-            return make_method(
-              name,
-              block,
-            );
-          },
-        );
-        emit_op(OpCode.POP);
-        current_class = current_class!.enclosing;
-        return functions;
-      },
-    );
-  }
-
-  @override
-  void visit_self_post(
-    final NaturalToken name,
-  ) {
-    if (current_class == null) {
-      error_delegate.error_at_previous("Can't use 'this' outside of a class");
-    } else {
-      visit_getter_pre(name);
-    }
-  }
-
-  @override
-  List<T> visit_block<T>(
-    final Iterable<T> Function() fn,
-  ) {
-    final decls = <T>[];
-    wrap_in_scope(
-      fn: () {
-        for (final x in fn()) {
-          decls.add(x);
-        }
-      },
-    );
-    return decls;
-  }
-
-  @override
-  T visit_and<T>(
-    final T Function() fn,
-  ) {
-    final end_jump = emit_jump(OpCode.JUMP_IF_FALSE);
-    emit_op(OpCode.POP);
-    final res = fn();
-    patch_jump(end_jump);
-    return res;
-  }
-
-  @override
-  T visit_or<T>(
-    final T Function() fn,
-  ) {
-    final else_jump = emit_jump(OpCode.JUMP_IF_FALSE);
-    final end_jump = emit_jump(OpCode.JUMP);
-    patch_jump(else_jump);
-    emit_op(OpCode.POP);
-    final res = fn();
-    patch_jump(end_jump);
-    return res;
-  }
-
-  @override
-  void visit_pluseq_post(
-    final MapEntry<int, OpCode> data,
-  ) {
-    emit_op(OpCode.ADD);
-    emit_byte(data.value.index);
-    emit_byte(data.key);
-  }
-
-  @override
-  void visit_minuseq_post(
-    final MapEntry<int, OpCode> data,
-  ) {
-    emit_op(OpCode.SUBTRACT);
-    emit_byte(data.value.index);
-    emit_byte(data.key);
-  }
-
-  @override
-  void visit_stareq_post(
-    final MapEntry<int, OpCode> data,
-  ) {
-    emit_op(OpCode.MULTIPLY);
-    emit_byte(data.value.index);
-    emit_byte(data.key);
-  }
-
-  @override
-  void visit_slasheq_post(
-    final MapEntry<int, OpCode> data,
-  ) {
-    emit_op(OpCode.DIVIDE);
-    emit_byte(data.value.index);
-    emit_byte(data.key);
-  }
-
-  @override
-  void visit_percenteq_post(
-    final MapEntry<int, OpCode> data,
-  ) {
-    emit_op(OpCode.MOD);
-    emit_byte(data.value.index);
-    emit_byte(data.key);
-  }
-
-  @override
-  void visit_careteq_post(
-    final MapEntry<int, OpCode> data,
-  ) {
-    emit_op(OpCode.POW);
-    emit_byte(data.value.index);
-    emit_byte(data.key);
-  }
-
-  @override
-  E visit_bracket<E extends Object>(
-    final bool Function() match_colon,
-    final E? Function() getter_ish_second,
-    final E? Function() setter_ish_second,
-    final E Function() expression,
-    final E Function(E? first, E? second) getter,
-    final E Function(E? first, E? second) setter,
-  ) {
-    final E? first = () {
-      if (match_colon()) {
-        emit_constant(Nil);
-        return null;
-      } else {
-        return expression();
-      }
-    }();
-    final getter_ish = () {
-      if (first == null) {
-        return true;
-      } else {
-        return match_colon();
-      }
-    }();
-    if (getter_ish) {
-      final second = () {
-        final _second = getter_ish_second();
-        if (_second == null) {
-          emit_constant(Nil);
-          return null;
-        } else {
-          return _second;
-        }
-      }();
-      emit_op(OpCode.CONTAINER_GET_RANGE);
-      return getter(
-        first,
-        second,
-      );
-    } else {
-      final _second = () {
-        final _second = setter_ish_second();
-        if (_second != null) {
-          emit_op(OpCode.CONTAINER_SET);
-          return _second;
-        } else {
-          emit_op(OpCode.CONTAINER_GET);
-          return null;
-        }
-      }();
-      return setter(
-        first,
-        _second,
+          emit_byte(OpCode.POP.index, line);
+          self(a.child);
+          patch_jump(a.token, end_jump);
+        },
+        or: (final a) {
+          final line = a.line;
+          final else_jump = function.chunk.emit_jump_if_false(
+            line,
+          );
+          final end_jump = function.chunk.emit_jump(
+            line,
+          );
+          patch_jump(a.token, else_jump);
+          emit_byte(OpCode.POP.index, line);
+          self(a.child);
+          patch_jump(a.token, end_jump);
+        },
+        listgetter: (final a) {
+          final line = a.line;
+          if (a.first != null) {
+            self(a.first!);
+          } else {
+            function.chunk.emit_constant(make_constant(a.first_token, Nil), line);
+          }
+          if (a.second != null) {
+            self(a.second!);
+          } else {
+            function.chunk.emit_constant(make_constant(a.second_token, Nil), line);
+          }
+          emit_byte(OpCode.CONTAINER_GET_RANGE.index, line);
+        },
+        listsetter: (final a) {
+          final line = a.line;
+          if (a.first != null) {
+            self(a.first!);
+          } else {
+            function.chunk.emit_constant(make_constant(a.token, Nil), line);
+          }
+          if (a.second != null) {
+            self(a.second!);
+            emit_byte(OpCode.CONTAINER_SET.index, line);
+          } else {
+            emit_byte(OpCode.CONTAINER_GET.index, line);
+          }
+        },
+        superaccess: (final a) {
+          if (current_class == null) {
+            error_delegate.error_at(a.kw, "Can't use 'super' outside of a class");
+          } else if (!current_class!.has_superclass) {
+            error_delegate.error_at(a.kw, "Can't use 'super' in a class with no superclass");
+          }
+          final name = make_constant(a.kw, a.kw.lexeme);
+          final line = a.line;
+          visit_getter(const TokenImpl(type: TokenType.IDENTIFIER, lexeme: 'this', loc: LocImpl(-1)), line);
+          final _args = a.args;
+          if (_args != null) {
+            for (final x in _args) {
+              self(x);
+            }
+          }
+          visit_getter(const TokenImpl(type: TokenType.IDENTIFIER, lexeme: 'super', loc: LocImpl(-1)), line);
+          if (_args != null) {
+            emit_byte(OpCode.SUPER_INVOKE.index, line);
+            emit_byte(name, line);
+            emit_byte(_args.length, line);
+          } else {
+            emit_byte(OpCode.GET_SUPER.index, line);
+            emit_byte(name, line);
+          }
+        },
+        composite: (final a) {
+          for (final x in a.exprs) {
+            self(x);
+          }
+        },
       );
     }
-  }
 
-  @override
-  void visit_dot_get_post(
-    final NaturalToken name_token,
-  ) {
-    final name = identifier_constant(name_token);
-    emit_byte(OpCode.GET_PROPERTY.index);
-    emit_byte(name);
-  }
-
-  @override
-  void visit_string_post(
-    final String value,
-  ) {
-    emit_constant(value);
-  }
-
-  @override
-  void visit_number_post(
-    final String val,
-  ) {
-    final value = double.tryParse(val);
-    if (value == null) {
-      error_delegate.error_at_previous('Invalid number');
-    } else {
-      emit_constant(value);
+    void compile_vari(
+      final DeclarationVari a,
+    ) {
+      for (final x in a.exprs) {
+        final global = make_variable(x.key);
+        compile_expr(x.value);
+        define_variable(global, line: a.line);
+      }
     }
-  }
 
-  @override
-  void visit_call_post(
-    final int length,
-  ) {
-    emit_byte(OpCode.CALL.index);
-    emit_byte(length);
-  }
-
-  @override
-  void visit_object_post() {
-    emit_constant(null);
-  }
-
-  @override
-  void visit_not_post() {
-    emit_op(OpCode.NOT);
-  }
-
-  @override
-  void visit_negate_post() {
-    emit_op(OpCode.NEGATE);
-  }
-
-  @override
-  void visit_map_post(
-    final int length,
-  ) {
-    emit_byte(OpCode.MAP_INIT.index);
-    emit_byte(length);
-  }
-
-  @override
-  void visit_subtract_post() {
-    emit_op(OpCode.SUBTRACT);
-  }
-
-  @override
-  void visit_add_post() {
-    emit_op(OpCode.ADD);
-  }
-
-  @override
-  void visit_divide_post() {
-    emit_op(OpCode.DIVIDE);
-  }
-
-  @override
-  void visit_multiply_post() {
-    emit_op(OpCode.MULTIPLY);
-  }
-
-  @override
-  void visit_power_post() {
-    emit_op(OpCode.POW);
-  }
-
-  @override
-  void visit_modulo_post() {
-    emit_op(OpCode.MOD);
-  }
-
-  @override
-  void visit_neq_post() {
-    emit_byte(OpCode.EQUAL.index);
-    emit_byte(OpCode.NOT.index);
-  }
-
-  @override
-  void visit_eq_post() {
-    emit_op(OpCode.EQUAL);
-  }
-
-  @override
-  void visit_geq_post() {
-    emit_byte(OpCode.LESS.index);
-    emit_byte(OpCode.NOT.index);
-  }
-
-  @override
-  void visit_greater_post() {
-    emit_op(OpCode.GREATER);
-  }
-
-  @override
-  void visit_less_post() {
-    emit_op(OpCode.LESS);
-  }
-
-  @override
-  void visit_leq_post() {
-    emit_byte(OpCode.GREATER.index);
-    emit_byte(OpCode.NOT.index);
-  }
-
-  @override
-  void visit_list_init_post(
-    final int val_count,
-  ) {
-    if (val_count >= 0) {
-      emit_byte(OpCode.LIST_INIT.index);
-      emit_byte(val_count);
-    } else {
-      emit_byte(OpCode.LIST_INIT_RANGE.index);
-    }
-  }
-
-  @override
-  void pop() {
-    emit_op(OpCode.POP);
-  }
-
-  @override
-  Expr compile_expr(
-    final Expr expr,
-  ) {
-    final self = compile_expr;
-    match_expr<void>(
-      expr: expr,
-      get2: (final a) => visit_get_post(a.name),
-      string: (final a) => visit_string_post(a.token.lexeme),
-      number: (final a) => visit_number_post(a.value.lexeme),
-      object: (final a) => visit_object_post(),
-      self: (final a) => visit_self_post(a.previous),
-      nil: (final a) => visit_nil_post(),
-      falsity: (final a) => visit_falsity_post(),
-      truth: (final a) => visit_truth_post(),
-      get: (final a) => visit_dot_get_post(a.name),
-      set2: (final a) {
-        self(a.arg);
-        visit_set_post(a.name);
-      },
-      negated: (final a) {
-        self(a.child);
-        visit_negate_post();
-      },
-      not: (final a) {
-        self(a.child);
-        visit_not_post();
-      },
-      call: (final a) {
-        for (final x in a.args) {
-          self(x);
-        }
-        visit_call_post(a.args.length);
-      },
-      set: (final a) {
-        self(a.arg);
-        visit_set_prop_post(a.name);
-      },
-      invoke: (final a) {
-        for (final x in a.args) {
-          self(x);
-        }
-        visit_invoke_post(a.name, a.args.length);
-      },
-      map: (final a) {
-        for (final x in a.entries) {
-          self(x.key);
-          self(x.value);
-        }
-        visit_map_post(a.entries.length);
-      },
-      list: (final a) {
-        for (final x in a.values) {
-          self(x);
-        }
-        visit_list_init_post(a.val_count);
-      },
-      minus: (final a) {
-        self(a.child);
-        visit_subtract_post();
-      },
-      plus: (final a) {
-        self(a.child);
-        visit_add_post();
-      },
-      slash: (final a) {
-        self(a.child);
-        visit_divide_post();
-      },
-      star: (final a) {
-        self(a.child);
-        visit_multiply_post();
-      },
-      g: (final a) {
-        self(a.child);
-        visit_greater_post();
-      },
-      geq: (final a) {
-        self(a.child);
-        visit_geq_post();
-      },
-      l: (final a) {
-        self(a.child);
-        visit_less_post();
-      },
-      leq: (final a) {
-        self(a.child);
-        visit_leq_post();
-      },
-      pow: (final a) {
-        self(a.child);
-        visit_power_post();
-      },
-      modulo: (final a) {
-        self(a.child);
-        visit_modulo_post();
-      },
-      neq: (final a) {
-        self(a.child);
-        visit_neq_post();
-      },
-      eq: (final a) {
-        self(a.child);
-        visit_eq_post();
-      },
-      expected: (final a) => error_delegate.error_at_previous('Expect expression'),
-      getset2: (final a) {
-        final maker = a.arg_maker;
-        if (maker == null) {
-          visit_get_post(a.name);
-          a.arg = null;
+    T wrap_in_scope<T>({
+      required final T Function() fn,
+      required final int line,
+    }) {
+      scope_depth++;
+      final val = fn();
+      scope_depth--;
+      while (locals.isNotEmpty && locals.last.depth > scope_depth) {
+        if (locals.last.is_captured) {
+          emit_byte(OpCode.CLOSE_UPVALUE.index, line);
         } else {
-          final data = visit_getter_pre(a.name);
-          final expr = maker();
-          a.arg = expr;
-          // TODO self
-          if (expr is ExprPluseq) visit_pluseq_post(data);
-          if (expr is ExprMinuseq) visit_minuseq_post(data);
-          if (expr is ExprStareq) visit_stareq_post(data);
-          if (expr is ExprSlasheq) visit_slasheq_post(data);
-          if (expr is ExprPoweq) visit_careteq_post(data);
-          if (expr is ExprModeq) visit_percenteq_post(data);
+          emit_byte(OpCode.POP.index, line);
         }
-      },
-      pluseq: (final a) {},
-      minuseq: (final a) {},
-      stareq: (final a) {},
-      slasheq: (final a) {},
-      poweq: (final a) {},
-      modeq: (final a) {},
-      and: (final a) {
-        visit_and(
-              () {
-            // TODO self
-            final child = a.child_maker();
-            a.child = child;
+        locals.removeLast();
+      }
+      return val;
+    }
+
+    void compile_stmt(
+      final Stmt stmt,
+    ) {
+      stmt.match(
+        output: (final a) {
+          compile_expr(a.expr);
+          emit_byte(OpCode.PRINT.index, a.line);
+        },
+        ret: (final a) {
+          final expr = a.expr;
+          if (expr == null) {
+            final line = a.line;
+            if (is_initializer) {
+              function.chunk.emit_return_local(line);
+            } else {
+              function.chunk.emit_return_nil(line);
+            }
+          } else {
+            if (is_initializer) {
+              error_delegate.error_at(a.kw, "Can't return a value from an initializer");
+            }
+            compile_expr(expr);
+            emit_byte(OpCode.RETURN.index, a.line);
+          }
+        },
+        expr: (final a) {
+          compile_expr(a.expr);
+          emit_byte(OpCode.POP.index, a.line);
+        },
+        loop: (final a) => wrap_in_scope(
+          fn: () {
+            final left = a.left;
+            final line = a.line;
+            if (left != null) {
+              left.match(
+                vari: (final a) {
+                  compile_vari(
+                    a.decl,
+                  );
+                },
+                expr: (final a) {
+                  compile_expr(a.expr);
+                  emit_byte(OpCode.POP.index, line);
+                },
+              );
+            }
+            int loop_start = function.chunk.count;
+            int exit_jump = -1;
+            final center = a.center;
+            if (center != null) {
+              compile_expr(center);
+              exit_jump = function.chunk.emit_jump_if_false(
+                line,
+              );
+              emit_byte(OpCode.POP.index, line); // Condition.
+            }
+            final _right = a.right;
+            if (_right != null) {
+              final body_jump = function.chunk.emit_jump(
+                line,
+              );
+              final increment_start = function.chunk.count;
+              final _expr = _right;
+              compile_expr(_expr);
+              emit_byte(OpCode.POP.index, line);
+              emit_loop(a.right_kw, loop_start, line);
+              loop_start = increment_start;
+              patch_jump(a.right_kw, body_jump);
+            }
+            final _stmt = a.body;
+            compile_stmt(_stmt);
+            emit_loop(a.end_kw, loop_start, line);
+            if (exit_jump != -1) {
+              patch_jump(a.end_kw, exit_jump);
+              emit_byte(OpCode.POP.index, line); // Condition.
+            }
           },
-        );
-      },
-      or: (final a) {
-        visit_or(
-              () {
-            // TODO self
-            final child = a.child_maker();
-            a.child = child;
+          line: a.line,
+        ),
+        loop2: (final a) => wrap_in_scope(
+          fn: () {
+            make_variable(a.key_name);
+            final line = a.line;
+            emit_byte(OpCode.NIL.index, line);
+            define_variable(0, line: line); // Remove 0
+            final stack_idx = locals.length - 1;
+            final value_name = a.value_name;
+            if (value_name != null) {
+              make_variable(value_name);
+              emit_byte(OpCode.NIL.index, line);
+              define_variable(0, line: line);
+            } else {
+              add_local(const TokenImpl(type: TokenType.IDENTIFIER, lexeme: '_for_val_', loc: LocImpl(-1)));
+              // Emit a zero to permute val & key
+              function.chunk.emit_constant(
+                make_constant(const TokenImpl(type: TokenType.IDENTIFIER, lexeme: "INVALID", loc: LocImpl(-1)), 0),
+                line,
+              );
+              mark_local_variable_initialized();
+            }
+            // Now add two dummy local variables. Idx & entries
+            add_local(const TokenImpl(type: TokenType.IDENTIFIER, lexeme: '_for_idx_', loc: LocImpl(-1)));
+            emit_byte(OpCode.NIL.index, line);
+            mark_local_variable_initialized();
+            add_local(const TokenImpl(type: TokenType.IDENTIFIER, lexeme: '_for_iterable_', loc: LocImpl(-1)));
+            emit_byte(OpCode.NIL.index, line);
+            mark_local_variable_initialized();
+            compile_expr(a.center);
+            final loop_start = function.chunk.count;
+            emit_byte(OpCode.CONTAINER_ITERATE.index, line);
+            emit_byte(stack_idx, line);
+            final exit_jump = function.chunk.emit_jump_if_false(
+              line,
+            );
+            emit_byte(OpCode.POP.index, line); // Condition
+            final body = a.body;
+            compile_stmt(body);
+            emit_loop(a.exit_token, loop_start, line);
+            patch_jump(a.exit_token, exit_jump);
+            emit_byte(OpCode.POP.index, line); // Condition
           },
+          line: a.line,
+        ),
+        block: (final a) {
+          final decls = <Declaration>[];
+          wrap_in_scope(
+            fn: () {
+              for (final x in a.block_maker(this)) {
+                decls.add(x);
+              }
+            },
+            line: a.line,
+          );
+          a.block = decls;
+        },
+        whil: (final a) {
+          final loop_start = function.chunk.count;
+          compile_expr(a.expr);
+          final line = a.line;
+          final exit_jump = function.chunk.emit_jump_if_false(
+            line,
+          );
+          emit_byte(OpCode.POP.index, line);
+          final stmt = a.stmt;
+          compile_stmt(stmt);
+          emit_loop(a.exit_kw, loop_start, line);
+          patch_jump(a.exit_kw, exit_jump);
+          emit_byte(OpCode.POP.index, line);
+        },
+        conditional: (final a) {
+          compile_expr(a.expr);
+          final then_jump = function.chunk.emit_jump_if_false(a.line);
+          emit_byte(OpCode.POP.index, a.line);
+          compile_stmt(a.stmt);
+          final else_jump = function.chunk.emit_jump(
+            a.line,
+          );
+          patch_jump(a.if_kw, then_jump);
+          emit_byte(OpCode.POP.index, a.line);
+          final other = a.other_maker();
+          if (other != null) {
+            final made = other;
+            compile_stmt(made);
+            a.other = made;
+          } else {
+            a.other = null;
+          }
+          patch_jump(a.else_kw, else_jump);
+        },
+      );
+    }
+
+    decl.match(
+      clazz: (final a) {
+        final name_constant = make_constant(
+          a.name,
+          a.name.lexeme,
+        );
+        declare_local_variable(a.name);
+        final line = a.line;
+        emit_byte(OpCode.CLASS.index, line);
+        emit_byte(name_constant, line);
+        define_variable(name_constant, line: line);
+        current_class = ClassCompiler(
+          enclosing: current_class,
+          name: a.name,
+          has_superclass: a.superclass_name != null,
+        );
+        a.functions = wrap_in_scope(
+          fn: () {
+            final superclass_name = a.superclass_name;
+            if (superclass_name != null) {
+              final class_name = current_class!.name!;
+              visit_getter(superclass_name, line);
+              if (class_name.lexeme == superclass_name.lexeme) {
+                error_delegate.error_at(superclass_name, "A class can't inherit from itself");
+              }
+              add_local(const TokenImpl(type: TokenType.IDENTIFIER, lexeme: 'super', loc: LocImpl(-1)));
+              define_variable(0, line: line);
+              visit_getter(class_name, line);
+              emit_byte(OpCode.INHERIT.index, line);
+            }
+            visit_getter(a.name, line);
+            final functions = a.make_functions(this);
+            emit_byte(OpCode.POP.index, line);
+            current_class = current_class!.enclosing;
+            return functions;
+          },
+          line: a.line,
         );
       },
-      listgetter: (final a) {
-        // if (a.first != null) self(a.first!);
-        // if (a.second != null) self(a.second!);
-        // TODO
+      fun: (final a) {
+        final global = make_variable(a.name);
+        mark_local_variable_initialized();
+        final _block = a.make_block(this);
+        define_variable(global, line: a.line);
+        a.block = _block;
       },
-      listsetter: (final a) {
-        // if (a.first != null) self(a.first!);
-        // if (a.second != null) self(a.second!);
-        // TODO
-      },
-      superaccess: (final a) {
-        // TODO self
-        final make = a.make_args;
-        visit_super<Expr>(
-          a.kw,
-          () => make?.call(),
-        );
-      },
-      composite: (final a) {
-        // for (final x in a.exprs) {
-        //   self(x);
-        // }
-      },
+      vari: (final a) => compile_vari(
+        a,
+      ),
+      stmt: (final a) => compile_stmt(
+        a.stmt,
+      ),
     );
-    return expr;
+  }
+
+  @override
+  ObjFunction compile(
+    final int last_line,
+  ) {
+    return end_compiler(last_line);
   }
 }
 
+// TODO remove interface, have just one top level compile function.
 abstract class Compiler {
   // TODO preorder postorder or keep generic fns?
-  // region fix
-  B visit_fn<D, B>(
-    final String Function() name,
+  void visit_fn(
     final FunctionType type,
-    final List<NaturalToken> Function() args,
-    final B Function(D Function() declaration) block,
-    final D Function(Compiler compiler) declaration,
+    final Functiony block,
+    final int line,
   );
 
-  List<T> visit_class<T, B>(
-    final NaturalToken class_name,
-    final NaturalToken Function() before_class_name,
-    final NaturalToken? Function() superclass,
-    final List<T> Function(
-      T Function(
-        NaturalToken,
-        B Function(
-          bool true_init_false_method,
-        ),
-      )
-          fn,
-    )
-        methods,
-    final T Function(
-      NaturalToken name,
-      B block,
-    )
-        make,
+  void visit_method(
+    final Method method,
   );
 
-  R visit_classic_for<L, E, S, R>(
-    final L? Function() left,
-    final E? Function() center,
-    final E Function()? Function() expr,
-    final S Function() stmt,
-    final R Function(L?, E?, E?, S) make,
+  void compile_declaration(
+    final Declaration decl,
   );
 
-  List<T> visit_block<T>(
-    final Iterable<T> Function() fn,
-  );
-
-  List<T> visit_var_decl<T>(
-    final Iterable<MapEntry<NaturalToken, T Function()>> Function() fn,
-  );
-
-  T visit_fun<T>(
-    final NaturalToken name,
-    final T Function() param1,
-  );
-
-  T visit_return_expr<T>(
-    final T Function() expression,
-  );
-
-  List<T>? visit_super<T>(
-    final NaturalToken name_token,
-    final List<T>? Function() args,
-  );
-
-  E visit_bracket<E extends Object>(
-    final bool Function() match_colon,
-    final E? Function() getter_ish_second,
-    final E? Function() setter_ish_second,
-    final E Function() expression,
-    final E Function(E? first, E? second) getter,
-    final E Function(E? first, E? second) setter,
-  );
-
-  R visit_while<E, S, R>(
-    final E Function() expression,
-    final S Function() statement,
-    final R Function(E expr, S stmt) make,
-  );
-
-  R visit_if<E, S, R>(
-    final E Function() condition,
-    final S Function() body,
-    final S? Function() other,
-    final R Function(E, S, S?) make,
-  );
-
-  R visit_iter_for<E, S, R>({
-    required final NaturalToken key_name,
-    required final NaturalToken? value_name,
-    required final E Function() iterable,
-    required final S Function() body,
-    required final R Function(E iterable, S body) make,
-  });
-
-  T visit_and<T>(
-    final T Function() fn,
-  );
-
-  T visit_or<T>(
-    final T Function() fn,
-  );
-
-  void visit_pluseq_post(
-    final MapEntry<int, OpCode> data,
-  );
-
-  void visit_minuseq_post(
-    final MapEntry<int, OpCode> data,
-  );
-
-  void visit_stareq_post(
-    final MapEntry<int, OpCode> data,
-  );
-
-  void visit_slasheq_post(
-    final MapEntry<int, OpCode> data,
-  );
-
-  void visit_percenteq_post(
-    final MapEntry<int, OpCode> data,
-  );
-
-  void visit_careteq_post(
-    final MapEntry<int, OpCode> data,
-  );
-  // endregion
-
-  // region all post
-  void visit_self_post(
-    final NaturalToken name,
-  );
-
-  void visit_print_post();
-
-  void visit_set_post(
-    final SyntheticToken name,
-  );
-
-  void visit_get_post(
-    final SyntheticToken name,
-  );
-
-  MapEntry<int, OpCode> visit_getter_pre(
-    final SyntheticToken name,
-  );
-
-  void visit_expr_stmt_post();
-
-  void visit_return_empty_post();
-
-  void visit_nil_post();
-
-  void visit_set_prop_post(
-    final NaturalToken name,
-  );
-
-  void visit_invoke_post(
-    final NaturalToken name_token,
-    final int length,
-  );
-
-  void visit_truth_post();
-
-  void visit_falsity_post();
-
-  void visit_dot_get_post(
-    final NaturalToken name_token,
-  );
-
-  void visit_string_post(
-    final String value,
-  );
-
-  void visit_number_post(
-    final String value,
-  );
-
-  void visit_call_post(
-    final int length,
-  );
-
-  void visit_object_post();
-
-  void visit_not_post();
-
-  void visit_negate_post();
-
-  void visit_map_post(
-    final int length,
-  );
-
-  void visit_subtract_post();
-
-  void visit_add_post();
-
-  void visit_divide_post();
-
-  void visit_multiply_post();
-
-  void visit_power_post();
-
-  void visit_modulo_post();
-
-  void visit_neq_post();
-
-  void visit_eq_post();
-
-  void visit_geq_post();
-
-  void visit_greater_post();
-
-  void visit_less_post();
-
-  void visit_leq_post();
-
-  void visit_list_init_post(
-    final int val_count,
-  );
-
-  // endregion
-
-  void pop();
-
-  Expr compile_expr(
-    final Expr expr,
+  ObjFunction compile(
+    final int last_line,
   );
 }
 
 Local init_local(
-  final bool is_function,
+  final bool is_not_function,
 ) {
   return Local(
-    name: SyntheticTokenImpl(
-      type: TokenType.FUN,
+    name: TokenImpl(
+      type: TokenType.IDENTIFIER,
       lexeme: () {
-        if (is_function) {
+        if (is_not_function) {
           return 'this';
         } else {
           return '';
         }
       }(),
+      loc: const LocImpl(-1),
     ),
     depth: 0,
     is_captured: false,
@@ -1589,7 +1042,7 @@ Local init_local(
 }
 
 class Local {
-  final SyntheticToken? name;
+  final Token name;
   int depth;
   bool is_captured;
 
@@ -1605,7 +1058,7 @@ class Local {
 }
 
 class Upvalue {
-  final SyntheticToken? name;
+  final Token name;
   final int index;
   final bool is_local;
 
@@ -1624,7 +1077,7 @@ enum FunctionType {
 
 class ClassCompiler {
   final ClassCompiler? enclosing;
-  final NaturalToken? name;
+  final Token? name;
   bool has_superclass;
 
   ClassCompiler({
@@ -1633,5 +1086,3 @@ class ClassCompiler {
     required final this.has_superclass,
   });
 }
-
-
