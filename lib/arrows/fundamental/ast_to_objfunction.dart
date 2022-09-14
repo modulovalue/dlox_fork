@@ -9,645 +9,22 @@ DloxFunction ast_to_objfunction({
   required final int last_line,
   required final bool trace_bytecode,
 }) {
-  return _ast_to_objfunction(
+  return _DloxCompilerRootImpl(
+    function: DloxFunction(
+      name: null,
+      arity: 0,
+      chunk: DloxChunk(),
+    ),
+    debug: debug,
+  )._ast_to_objfunction(
     debug: debug,
     compilation_unit: compilation_unit.decls,
-    compiler: _DloxCompilerRootImpl(
-      function: DloxFunction(
-        name: null,
-      ),
-      debug: debug,
-    ),
     trace_bytecode: trace_bytecode,
     last_line: last_line,
   );
 }
 
 // region private
-DloxFunction _ast_to_objfunction({
-  required final Debug debug,
-  required final List<Declaration> compilation_unit,
-  required final _Compiler compiler,
-  required final int last_line,
-  required final bool trace_bytecode,
-}) {
-  // region run
-  void compile_declaration(
-    final Declaration decl,
-  ) {
-    void visit_fn(
-      final bool is_initializer,
-      final bool is_function,
-      final Functiony block,
-      final int line,
-    ) {
-      final new_compiler = _DloxCompilerWrappedImpl(
-        function: DloxFunction(
-          name: block.name,
-        ),
-        is_initializer: is_initializer,
-        local: _init_local(is_function),
-        enclosing: compiler,
-      );
-      for (final name in block.args) {
-        new_compiler.function.arity++;
-        if (new_compiler.function.arity > 255) {
-          debug.error_at(name, "Can't have more than 255 parameters");
-        }
-        new_compiler.make_variable(name);
-        new_compiler.mark_local_variable_initialized();
-      }
-      for (int k = 0; k < block.args.length; k++) {
-        new_compiler.define_variable(0, peek_dist: block.args.length - 1 - k, line: line);
-      }
-      _ast_to_objfunction(
-        trace_bytecode: trace_bytecode,
-        debug: debug,
-        compiler: new_compiler,
-        compilation_unit: block.decls,
-        last_line: line,
-      );
-    }
-
-    MapEntry<void Function(int line), void Function(int line)> get_or_set(
-      final Token name,
-    ) {
-      final local_arg = compiler.resolve_local(name);
-      if (local_arg == null) {
-        final upvalue_arg = compiler.resolve_upvalue(name);
-        if (upvalue_arg == null) {
-          final constant_arg = compiler.make_constant(name, name.lexeme);
-          return MapEntry(
-            (final line) => compiler.function.chunk.emit_get_global(constant_arg, line),
-            (final line) => compiler.function.chunk.emit_set_global(constant_arg, line),
-          );
-        } else {
-          return MapEntry(
-            (final line) => compiler.function.chunk.emit_get_upvalue(upvalue_arg, line),
-            (final line) => compiler.function.chunk.emit_set_upvalue(upvalue_arg, line),
-          );
-        }
-      } else {
-        return MapEntry(
-          (final line) => compiler.function.chunk.emit_get_local(local_arg, line),
-          (final line) => compiler.function.chunk.emit_set_local(local_arg, line),
-        );
-      }
-    }
-
-    void compile_expr(
-      final Expr expr,
-    ) {
-      final self = compile_expr;
-      match_expr<void>(
-        expr: expr,
-        string: (final a) {
-          final line = a.line;
-          compiler.function.chunk.emit_constant(compiler.make_constant(a.token, a.token.lexeme), line);
-        },
-        number: (final a) {
-          final value = double.tryParse(a.value.lexeme);
-          if (value == null) {
-            debug.error_at(a.value, 'Invalid number');
-          } else {
-            final line = a.line;
-            compiler.function.chunk.emit_constant(compiler.make_constant(a.value, value), line);
-          }
-        },
-        object: (final a) {
-          final line = a.line;
-          compiler.function.chunk.emit_constant(compiler.make_constant(a.token, null), line);
-        },
-        self: (final a) {
-          if (compiler.current_class == null) {
-            debug.error_at(a.previous, "Can't use 'this' outside of a class");
-          } else {
-            get_or_set(a.previous).key(a.line);
-          }
-        },
-        nil: (final a) => compiler.function.chunk.emit_nil(a.line),
-        falsity: (final a) => compiler.function.chunk.emit_false(a.line),
-        truth: (final a) => compiler.function.chunk.emit_true(a.line),
-        get: (final a) => compiler.function.chunk.emit_get_property(
-          compiler.make_constant(a.name, a.name.lexeme),
-          a.line,
-        ),
-        set2: (final a) {
-          self(a.arg);
-          get_or_set(a.name).value(a.line);
-        },
-        negated: (final a) {
-          self(a.child);
-          compiler.function.chunk.emit_negate(a.line);
-        },
-        not: (final a) {
-          self(a.child);
-          compiler.function.chunk.emit_not(a.line);
-        },
-        call: (final a) {
-          for (final x in a.args) {
-            self(x);
-          }
-          compiler.function.chunk.emit_call(a.args.length, a.line);
-        },
-        set: (final a) {
-          self(a.arg);
-          compiler.function.chunk.emit_set_property(compiler.make_constant(a.name, a.name.lexeme), a.line);
-        },
-        invoke: (final a) {
-          for (final x in a.args) {
-            self(x);
-          }
-          compiler.function.chunk.emit_invoke(
-            compiler.make_constant(a.name, a.name.lexeme),
-            a.args.length,
-            a.line,
-          );
-        },
-        map: (final a) {
-          for (final x in a.entries) {
-            self(x.key);
-            self(x.value);
-          }
-          compiler.function.chunk.emit_map_init(a.entries.length, a.line);
-        },
-        list: (final a) {
-          for (final x in a.values) {
-            self(x);
-          }
-          if (a.val_count >= 0) {
-            compiler.function.chunk.emit_list_init(a.val_count, a.line);
-          } else {
-            compiler.function.chunk.emit_list_init_range(a.line);
-          }
-        },
-        minus: (final a) {
-          self(a.child);
-          compiler.function.chunk.emit_subtract(a.line);
-        },
-        plus: (final a) {
-          self(a.child);
-          compiler.function.chunk.emit_add(a.line);
-        },
-        slash: (final a) {
-          self(a.child);
-          compiler.function.chunk.emit_divide(a.line);
-        },
-        star: (final a) {
-          self(a.child);
-          compiler.function.chunk.emit_multiply(a.line);
-        },
-        g: (final a) {
-          self(a.child);
-          compiler.function.chunk.emit_greater(a.line);
-        },
-        geq: (final a) {
-          self(a.child);
-          final line = a.line;
-          compiler.function.chunk.emit_not_less(line);
-        },
-        l: (final a) {
-          self(a.child);
-          compiler.function.chunk.emit_less(a.line);
-        },
-        leq: (final a) {
-          self(a.child);
-          final line = a.line;
-          compiler.function.chunk.emit_not_greater(line);
-        },
-        pow: (final a) {
-          self(a.child);
-          compiler.function.chunk.emit_pow(a.line);
-        },
-        modulo: (final a) {
-          self(a.child);
-          compiler.function.chunk.emit_mod(a.line);
-        },
-        neq: (final a) {
-          self(a.child);
-          compiler.function.chunk.emit_notequal(a.line);
-        },
-        eq: (final a) {
-          self(a.child);
-          compiler.function.chunk.emit_equal(a.line);
-        },
-        expected: (final a) {},
-        getset2: (final a) {
-          final setter_child = a.child;
-          final line = a.line;
-          final data = get_or_set(a.name);
-          data.key(line);
-          if (setter_child != null) {
-            switch (setter_child.type) {
-              case GetsetType.pluseq:
-                self(setter_child.child);
-                compiler.function.chunk.emit_add(a.line);
-                data.value(line);
-                break;
-              case GetsetType.minuseq:
-                self(setter_child.child);
-                compiler.function.chunk.emit_subtract(a.line);
-                data.value(line);
-                break;
-              case GetsetType.stareq:
-                self(setter_child.child);
-                compiler.function.chunk.emit_multiply(a.line);
-                data.value(line);
-                break;
-              case GetsetType.slasheq:
-                self(setter_child.child);
-                compiler.function.chunk.emit_divide(a.line);
-                data.value(line);
-                break;
-              case GetsetType.poweq:
-                self(setter_child.child);
-                compiler.function.chunk.emit_pow(a.line);
-                data.value(line);
-                break;
-              case GetsetType.modeq:
-                self(setter_child.child);
-                compiler.function.chunk.emit_mod(a.line);
-                data.value(line);
-                break;
-            }
-          }
-        },
-        and: (final a) {
-          final line = a.line;
-          final end_jump = compiler.function.chunk.emit_jump_if_false(
-            line,
-          );
-          compiler.function.chunk.emit_pop(a.line);
-          self(a.child);
-          compiler.patch_jump(a.token, end_jump);
-        },
-        or: (final a) {
-          final else_jump = compiler.function.chunk.emit_jump_if_false(a.line);
-          final end_jump = compiler.function.chunk.emit_jump(a.line);
-          compiler.patch_jump(a.token, else_jump);
-          compiler.function.chunk.emit_pop(a.line);
-          self(a.child);
-          compiler.patch_jump(a.token, end_jump);
-        },
-        listgetter: (final a) {
-          if (a.first != null) {
-            self(a.first!);
-          } else {
-            compiler.function.chunk.emit_constant(compiler.make_constant(a.first_token, DloxNil), a.line);
-          }
-          if (a.second != null) {
-            self(a.second!);
-          } else {
-            compiler.function.chunk.emit_constant(compiler.make_constant(a.second_token, DloxNil), a.line);
-          }
-          compiler.function.chunk.emit_container_get_range(a.line);
-        },
-        listsetter: (final a) {
-          if (a.first != null) {
-            self(a.first!);
-          } else {
-            compiler.function.chunk.emit_constant(compiler.make_constant(a.token, DloxNil), a.line);
-          }
-          if (a.second != null) {
-            self(a.second!);
-            compiler.function.chunk.emit_container_set(a.line);
-          } else {
-            compiler.function.chunk.emit_container_get(a.line);
-          }
-        },
-        superaccess: (final a) {
-          if (compiler.current_class == null) {
-            debug.error_at(a.kw, "Can't use 'super' outside of a class");
-          } else if (!compiler.current_class!.has_superclass) {
-            debug.error_at(a.kw, "Can't use 'super' in a class with no superclass");
-          }
-          final name = compiler.make_constant(a.kw, a.kw.lexeme);
-          get_or_set(const TokenImpl(type: TokenType.IDENTIFIER, lexeme: 'this', loc: LocImpl(-1))).key(a.line);
-          final _args = a.args;
-          if (_args != null) {
-            for (final x in _args) {
-              self(x);
-            }
-          }
-          get_or_set(const TokenImpl(type: TokenType.IDENTIFIER, lexeme: 'super', loc: LocImpl(-1))).key(a.line);
-          if (_args != null) {
-            compiler.function.chunk.emit_super_invoke(name, _args.length, a.line);
-          } else {
-            compiler.function.chunk.emit_get_super(name, a.line);
-          }
-        },
-        composite: (final a) {
-          for (final x in a.exprs) {
-            self(x);
-          }
-        },
-      );
-    }
-
-    void compile_vari(
-      final DeclarationVari a,
-    ) {
-      for (final x in a.exprs) {
-        final global = compiler.make_variable(x.key);
-        compile_expr(x.value);
-        compiler.define_variable(global, line: a.line);
-      }
-    }
-
-    T wrap_in_scope<T>({
-      required final T Function() fn,
-      required final int line,
-    }) {
-      compiler.scope_depth++;
-      final val = fn();
-      compiler.scope_depth--;
-      while (compiler.locals.isNotEmpty && compiler.locals.last.depth > compiler.scope_depth) {
-        if (compiler.locals.last.is_captured) {
-          compiler.function.chunk.emit_close_upvalue(line);
-        } else {
-          compiler.function.chunk.emit_pop(line);
-        }
-        compiler.locals.removeLast();
-      }
-      return val;
-    }
-
-    void compile_stmt(
-      final Stmt stmt,
-    ) {
-      stmt.match(
-        output: (final a) {
-          compile_expr(a.expr);
-          compiler.function.chunk.emit_print(a.line);
-        },
-        ret: (final a) {
-          final expr = a.expr;
-          if (expr == null) {
-            final line = a.line;
-            if (compiler.is_initializer) {
-              compiler.function.chunk.emit_return_local(line);
-            } else {
-              compiler.function.chunk.emit_return_nil(line);
-            }
-          } else {
-            if (compiler.is_initializer) {
-              debug.error_at(a.kw, "Can't return a value from an initializer");
-            }
-            compile_expr(expr);
-            compiler.function.chunk.emit_return(a.line);
-          }
-        },
-        expr: (final a) {
-          compile_expr(a.expr);
-          compiler.function.chunk.emit_pop(a.line);
-        },
-        loop: (final a) => wrap_in_scope(
-          fn: () {
-            final left = a.left;
-            final line = a.line;
-            if (left != null) {
-              left.match(
-                vari: (final a) {
-                  compile_vari(
-                    a.decl,
-                  );
-                },
-                expr: (final a) {
-                  compile_expr(a.expr);
-                  compiler.function.chunk.emit_pop(line);
-                },
-              );
-            }
-            int loop_start = compiler.function.chunk.code.length;
-            int exit_jump = -1;
-            final center = a.center;
-            if (center != null) {
-              compile_expr(center);
-              exit_jump = compiler.function.chunk.emit_jump_if_false(
-                line,
-              );
-              compiler.function.chunk.emit_pop(line);
-            }
-            final _right = a.right;
-            if (_right != null) {
-              final body_jump = compiler.function.chunk.emit_jump(
-                line,
-              );
-              final increment_start = compiler.function.chunk.code.length;
-              final _expr = _right;
-              compile_expr(_expr);
-              compiler.function.chunk.emit_pop(line);
-              compiler.emit_loop(a.right_kw, loop_start, line);
-              loop_start = increment_start;
-              compiler.patch_jump(a.right_kw, body_jump);
-            }
-            final _stmt = a.body;
-            compile_stmt(_stmt);
-            compiler.emit_loop(a.end_kw, loop_start, line);
-            if (exit_jump != -1) {
-              compiler.patch_jump(a.end_kw, exit_jump);
-              compiler.function.chunk.emit_pop(line);
-            }
-          },
-          line: a.line,
-        ),
-        loop2: (final a) => wrap_in_scope(
-          fn: () {
-            compiler.make_variable(a.key_name);
-            final line = a.line;
-            compiler.function.chunk.emit_nil(line);
-            compiler.define_variable(0, line: line); // Remove 0
-            final stack_idx = compiler.locals.length - 1;
-            final value_name = a.value_name;
-            if (value_name != null) {
-              compiler.make_variable(value_name);
-              compiler.function.chunk.emit_nil(line);
-              compiler.define_variable(0, line: line);
-            } else {
-              compiler.add_local(
-                const TokenImpl(type: TokenType.IDENTIFIER, lexeme: '_for_val_', loc: LocImpl(-1)),
-              );
-              // Emit a zero to permute val & key
-              compiler.function.chunk.emit_constant(
-                compiler.make_constant(
-                  const TokenImpl(type: TokenType.IDENTIFIER, lexeme: "INVALID", loc: LocImpl(-1)),
-                  0,
-                ),
-                line,
-              );
-              compiler.mark_local_variable_initialized();
-            }
-            // Now add two dummy local variables. Idx & entries
-            compiler.add_local(
-              const TokenImpl(type: TokenType.IDENTIFIER, lexeme: '_for_idx_', loc: LocImpl(-1)),
-            );
-            compiler.function.chunk.emit_nil(line);
-            compiler.mark_local_variable_initialized();
-            compiler.add_local(
-              const TokenImpl(type: TokenType.IDENTIFIER, lexeme: '_for_iterable_', loc: LocImpl(-1)),
-            );
-            compiler.function.chunk.emit_nil(line);
-            compiler.mark_local_variable_initialized();
-            compile_expr(a.center);
-            final loop_start = compiler.function.chunk.code.length;
-            compiler.function.chunk.emit_container_iterate(stack_idx, line);
-            final exit_jump = compiler.function.chunk.emit_jump_if_false(line);
-            compiler.function.chunk.emit_pop(line);
-            final body = a.body;
-            compile_stmt(body);
-            compiler.emit_loop(a.exit_token, loop_start, line);
-            compiler.patch_jump(a.exit_token, exit_jump);
-            compiler.function.chunk.emit_pop(line);
-          },
-          line: a.line,
-        ),
-        block: (final a) => wrap_in_scope(
-          fn: () {
-            for (final x in a.block) {
-              debug.restore();
-              compile_declaration(x);
-            }
-          },
-          line: a.line,
-        ),
-        whil: (final a) {
-          final loop_start = compiler.function.chunk.code.length;
-          compile_expr(a.expr);
-          final line = a.line;
-          final exit_jump = compiler.function.chunk.emit_jump_if_false(
-            line,
-          );
-          compiler.function.chunk.emit_pop(line);
-          final stmt = a.stmt;
-          compile_stmt(stmt);
-          compiler.emit_loop(a.exit_kw, loop_start, line);
-          compiler.patch_jump(a.exit_kw, exit_jump);
-          compiler.function.chunk.emit_pop(line);
-        },
-        conditional: (final a) {
-          compile_expr(a.expr);
-          final then_jump = compiler.function.chunk.emit_jump_if_false(a.line);
-          compiler.function.chunk.emit_pop(a.line);
-          compile_stmt(a.stmt);
-          final else_jump = compiler.function.chunk.emit_jump(
-            a.line,
-          );
-          compiler.patch_jump(a.if_kw, then_jump);
-          compiler.function.chunk.emit_pop(a.line);
-          final other = a.other;
-          if (other != null) {
-            compile_stmt(other);
-          }
-          compiler.patch_jump(a.else_kw, else_jump);
-        },
-      );
-    }
-
-    decl.match(
-      clazz: (final a) {
-        final name_constant = compiler.make_constant(
-          a.name,
-          a.name.lexeme,
-        );
-        compiler.current_class = _ClassCompiler(
-          enclosing: compiler.current_class,
-          name: a.name,
-          has_superclass: a.superclass_name != null,
-        );
-        compiler.declare_local_variable(a.name);
-        compiler.function.chunk.emit_class(name_constant, a.line);
-        compiler.define_variable(name_constant, line: a.line);
-        wrap_in_scope(
-          fn: () {
-            final superclass_name = a.superclass_name;
-            if (superclass_name != null) {
-              final class_name = compiler.current_class!.name!;
-              get_or_set(superclass_name).key(a.line);
-              if (class_name.lexeme == superclass_name.lexeme) {
-                debug.error_at(superclass_name, "A class can't inherit from itself");
-              }
-              compiler.add_local(
-                const TokenImpl(type: TokenType.IDENTIFIER, lexeme: 'super', loc: LocImpl(-1)),
-              );
-              compiler.define_variable(0, line: a.line);
-              get_or_set(class_name).key(a.line);
-              compiler.function.chunk.emit_inherit(a.line);
-            }
-            get_or_set(a.name).key(a.line);
-            final functions = a.functions;
-            for (final x in functions) {
-              visit_fn(x.name.lexeme == 'init', false, x.block, x.line);
-              final line = x.line;
-              compiler.function.chunk.emit_method(compiler.make_constant(x.name, x.name.lexeme), line);
-            }
-            compiler.function.chunk.emit_pop(a.line);
-            compiler.current_class = compiler.current_class!.enclosing;
-            return functions;
-          },
-          line: a.line,
-        );
-      },
-      fun: (final a) {
-        final global = compiler.make_variable(a.name);
-        compiler.mark_local_variable_initialized();
-        visit_fn(false, true, a.block, a.line);
-        compiler.define_variable(global, line: a.line);
-      },
-      vari: (final a) => compile_vari(
-        a,
-      ),
-      stmt: (final a) => compile_stmt(
-        a.stmt,
-      ),
-    );
-  }
-
-  for (final x in compilation_unit) {
-    debug.restore();
-    compile_declaration(x);
-  }
-  // endregion
-  // region finish
-  if (compiler.is_initializer) {
-    compiler.function.chunk.emit_return_local(last_line);
-  } else {
-    compiler.function.chunk.emit_return_nil(last_line);
-  }
-  if (debug.errors.isEmpty && trace_bytecode) {
-    debug.disassemble_chunk(
-      compiler.function.chunk,
-      compiler.function.name ?? '<script>',
-    );
-  }
-  if (compiler.enclosing != null) {
-    final _enclosing = compiler.enclosing!;
-    _enclosing.function.chunk.emit_closure(
-      _enclosing.make_constant(
-        const TokenImpl(type: TokenType.IDENTIFIER, lexeme: "INVALID", loc: LocImpl(-1)),
-        compiler.function,
-      ),
-      last_line,
-    );
-    for (final x in compiler.upvalues) {
-      _enclosing.function.chunk.emit_upvalue(
-        () {
-          if (x.is_local) {
-            return 1;
-          } else {
-            return 0;
-          }
-        }(),
-        x.index,
-        last_line,
-      );
-    }
-    return compiler.function;
-  } else {
-    return compiler.function;
-  }
-  // endregion
-}
-
 class _DloxCompilerRootImpl with _DloxCompilerMixin {
   @override
   final Debug debug;
@@ -711,7 +88,6 @@ class _DloxCompilerWrappedImpl with _DloxCompilerMixin {
 }
 
 mixin _DloxCompilerMixin implements _Compiler {
-  @override
   void emit_loop(
     final Token previous,
     final int loop_start,
@@ -738,7 +114,6 @@ mixin _DloxCompilerMixin implements _Compiler {
     }
   }
 
-  @override
   void patch_jump(
     final Token token,
     final int offset,
@@ -751,7 +126,6 @@ mixin _DloxCompilerMixin implements _Compiler {
     function.chunk.code[offset + 1] = MapEntry(jump & 0xff, function.chunk.code[offset + 1].value);
   }
 
-  @override
   void add_local(
     final Token name,
   ) {
@@ -792,7 +166,7 @@ mixin _DloxCompilerMixin implements _Compiler {
     final bool is_local,
   ) {
     assert(
-      upvalues.length == function.upvalue_count,
+      upvalues.length == function.chunk.upvalue_count,
       "",
     );
     for (int i = 0; i < upvalues.length; i++) {
@@ -814,7 +188,7 @@ mixin _DloxCompilerMixin implements _Compiler {
           is_local: is_local,
         ),
       );
-      return function.upvalue_count++;
+      return function.chunk.upvalue_count++;
     }
   }
 
@@ -842,14 +216,12 @@ mixin _DloxCompilerMixin implements _Compiler {
     }
   }
 
-  @override
   void mark_local_variable_initialized() {
     if (scope_depth != 0) {
       locals.last.depth = scope_depth;
     }
   }
 
-  @override
   void define_variable(
     final int global, {
     required final int line,
@@ -863,7 +235,6 @@ mixin _DloxCompilerMixin implements _Compiler {
     }
   }
 
-  @override
   void declare_local_variable(
     final Token name,
   ) {
@@ -882,7 +253,6 @@ mixin _DloxCompilerMixin implements _Compiler {
     }
   }
 
-  @override
   int make_variable(
     final Token name,
   ) {
@@ -892,6 +262,639 @@ mixin _DloxCompilerMixin implements _Compiler {
     } else {
       return make_constant(name, name.lexeme);
     }
+  }
+
+  DloxFunction _ast_to_objfunction({
+    required final Debug debug,
+    required final List<Declaration> compilation_unit,
+    required final int last_line,
+    required final bool trace_bytecode,
+  }) {
+    // region run
+    void compile_declaration(
+      final Declaration decl,
+    ) {
+      void visit_fn(
+        final bool is_initializer,
+        final bool is_function,
+        final Functiony block,
+        final int line,
+      ) {
+        final function = DloxFunction(
+          name: block.name,
+          arity: () {
+            int i = 0;
+            for (final name in block.args) {
+              i++;
+              if (i > 255) {
+                debug.error_at(name, "Can't have more than 255 parameters");
+              }
+            }
+            return i;
+          }(),
+          chunk: DloxChunk(),
+        );
+        final new_compiler = _DloxCompilerWrappedImpl(
+          function: function,
+          is_initializer: is_initializer,
+          local: _init_local(is_function),
+          enclosing: this,
+        );
+        for (final name in block.args) {
+          new_compiler.make_variable(name);
+          new_compiler.mark_local_variable_initialized();
+        }
+        for (int k = 0; k < block.args.length; k++) {
+          new_compiler.define_variable(0, peek_dist: block.args.length - 1 - k, line: line);
+        }
+        new_compiler._ast_to_objfunction(
+          trace_bytecode: trace_bytecode,
+          debug: debug,
+          compilation_unit: block.decls,
+          last_line: line,
+        );
+      }
+
+      MapEntry<void Function(int line), void Function(int line)> get_or_set(
+        final Token name,
+      ) {
+        final local_arg = this.resolve_local(name);
+        if (local_arg == null) {
+          final upvalue_arg = this.resolve_upvalue(name);
+          if (upvalue_arg == null) {
+            final constant_arg = this.make_constant(name, name.lexeme);
+            return MapEntry(
+              (final line) => this.function.chunk.emit_get_global(constant_arg, line),
+              (final line) => this.function.chunk.emit_set_global(constant_arg, line),
+            );
+          } else {
+            return MapEntry(
+              (final line) => this.function.chunk.emit_get_upvalue(upvalue_arg, line),
+              (final line) => this.function.chunk.emit_set_upvalue(upvalue_arg, line),
+            );
+          }
+        } else {
+          return MapEntry(
+            (final line) => this.function.chunk.emit_get_local(local_arg, line),
+            (final line) => this.function.chunk.emit_set_local(local_arg, line),
+          );
+        }
+      }
+
+      void compile_expr(
+        final Expr expr,
+      ) {
+        final self = compile_expr;
+        match_expr<void>(
+          expr: expr,
+          string: (final a) {
+            final line = a.line;
+            this.function.chunk.emit_constant(this.make_constant(a.token, a.token.lexeme), line);
+          },
+          number: (final a) {
+            final value = double.tryParse(a.value.lexeme);
+            if (value == null) {
+              debug.error_at(a.value, 'Invalid number');
+            } else {
+              final line = a.line;
+              this.function.chunk.emit_constant(this.make_constant(a.value, value), line);
+            }
+          },
+          object: (final a) {
+            final line = a.line;
+            this.function.chunk.emit_constant(this.make_constant(a.token, null), line);
+          },
+          self: (final a) {
+            if (this.current_class == null) {
+              debug.error_at(a.previous, "Can't use 'this' outside of a class");
+            } else {
+              get_or_set(a.previous).key(a.line);
+            }
+          },
+          nil: (final a) => this.function.chunk.emit_nil(a.line),
+          falsity: (final a) => this.function.chunk.emit_false(a.line),
+          truth: (final a) => this.function.chunk.emit_true(a.line),
+          get: (final a) => this.function.chunk.emit_get_property(
+                this.make_constant(a.name, a.name.lexeme),
+                a.line,
+              ),
+          set2: (final a) {
+            self(a.arg);
+            get_or_set(a.name).value(a.line);
+          },
+          negated: (final a) {
+            self(a.child);
+            this.function.chunk.emit_negate(a.line);
+          },
+          not: (final a) {
+            self(a.child);
+            this.function.chunk.emit_not(a.line);
+          },
+          call: (final a) {
+            for (final x in a.args) {
+              self(x);
+            }
+            this.function.chunk.emit_call(a.args.length, a.line);
+          },
+          set: (final a) {
+            self(a.arg);
+            this.function.chunk.emit_set_property(this.make_constant(a.name, a.name.lexeme), a.line);
+          },
+          invoke: (final a) {
+            for (final x in a.args) {
+              self(x);
+            }
+            this.function.chunk.emit_invoke(
+                  this.make_constant(a.name, a.name.lexeme),
+                  a.args.length,
+                  a.line,
+                );
+          },
+          map: (final a) {
+            for (final x in a.entries) {
+              self(x.key);
+              self(x.value);
+            }
+            this.function.chunk.emit_map_init(a.entries.length, a.line);
+          },
+          list: (final a) {
+            for (final x in a.values) {
+              self(x);
+            }
+            if (a.val_count >= 0) {
+              this.function.chunk.emit_list_init(a.val_count, a.line);
+            } else {
+              this.function.chunk.emit_list_init_range(a.line);
+            }
+          },
+          minus: (final a) {
+            self(a.child);
+            this.function.chunk.emit_subtract(a.line);
+          },
+          plus: (final a) {
+            self(a.child);
+            this.function.chunk.emit_add(a.line);
+          },
+          slash: (final a) {
+            self(a.child);
+            this.function.chunk.emit_divide(a.line);
+          },
+          star: (final a) {
+            self(a.child);
+            this.function.chunk.emit_multiply(a.line);
+          },
+          g: (final a) {
+            self(a.child);
+            this.function.chunk.emit_greater(a.line);
+          },
+          geq: (final a) {
+            self(a.child);
+            final line = a.line;
+            this.function.chunk.emit_not_less(line);
+          },
+          l: (final a) {
+            self(a.child);
+            this.function.chunk.emit_less(a.line);
+          },
+          leq: (final a) {
+            self(a.child);
+            final line = a.line;
+            this.function.chunk.emit_not_greater(line);
+          },
+          pow: (final a) {
+            self(a.child);
+            this.function.chunk.emit_pow(a.line);
+          },
+          modulo: (final a) {
+            self(a.child);
+            this.function.chunk.emit_mod(a.line);
+          },
+          neq: (final a) {
+            self(a.child);
+            this.function.chunk.emit_notequal(a.line);
+          },
+          eq: (final a) {
+            self(a.child);
+            this.function.chunk.emit_equal(a.line);
+          },
+          expected: (final a) {},
+          getset2: (final a) {
+            final setter_child = a.child;
+            final line = a.line;
+            final data = get_or_set(a.name);
+            data.key(line);
+            if (setter_child != null) {
+              switch (setter_child.type) {
+                case GetsetType.pluseq:
+                  self(setter_child.child);
+                  this.function.chunk.emit_add(a.line);
+                  data.value(line);
+                  break;
+                case GetsetType.minuseq:
+                  self(setter_child.child);
+                  this.function.chunk.emit_subtract(a.line);
+                  data.value(line);
+                  break;
+                case GetsetType.stareq:
+                  self(setter_child.child);
+                  this.function.chunk.emit_multiply(a.line);
+                  data.value(line);
+                  break;
+                case GetsetType.slasheq:
+                  self(setter_child.child);
+                  this.function.chunk.emit_divide(a.line);
+                  data.value(line);
+                  break;
+                case GetsetType.poweq:
+                  self(setter_child.child);
+                  this.function.chunk.emit_pow(a.line);
+                  data.value(line);
+                  break;
+                case GetsetType.modeq:
+                  self(setter_child.child);
+                  this.function.chunk.emit_mod(a.line);
+                  data.value(line);
+                  break;
+              }
+            }
+          },
+          and: (final a) {
+            final line = a.line;
+            final end_jump = this.function.chunk.emit_jump_if_false(
+                  line,
+                );
+            this.function.chunk.emit_pop(a.line);
+            self(a.child);
+            this.patch_jump(a.token, end_jump);
+          },
+          or: (final a) {
+            final else_jump = this.function.chunk.emit_jump_if_false(a.line);
+            final end_jump = this.function.chunk.emit_jump(a.line);
+            this.patch_jump(a.token, else_jump);
+            this.function.chunk.emit_pop(a.line);
+            self(a.child);
+            this.patch_jump(a.token, end_jump);
+          },
+          listgetter: (final a) {
+            if (a.first != null) {
+              self(a.first!);
+            } else {
+              this.function.chunk.emit_constant(this.make_constant(a.first_token, DloxNil), a.line);
+            }
+            if (a.second != null) {
+              self(a.second!);
+            } else {
+              this.function.chunk.emit_constant(this.make_constant(a.second_token, DloxNil), a.line);
+            }
+            this.function.chunk.emit_container_get_range(a.line);
+          },
+          listsetter: (final a) {
+            if (a.first != null) {
+              self(a.first!);
+            } else {
+              this.function.chunk.emit_constant(this.make_constant(a.token, DloxNil), a.line);
+            }
+            if (a.second != null) {
+              self(a.second!);
+              this.function.chunk.emit_container_set(a.line);
+            } else {
+              this.function.chunk.emit_container_get(a.line);
+            }
+          },
+          superaccess: (final a) {
+            if (this.current_class == null) {
+              debug.error_at(a.kw, "Can't use 'super' outside of a class");
+            } else if (!this.current_class!.has_superclass) {
+              debug.error_at(a.kw, "Can't use 'super' in a class with no superclass");
+            }
+            final name = this.make_constant(a.kw, a.kw.lexeme);
+            get_or_set(const TokenImpl(type: TokenType.IDENTIFIER, lexeme: 'this', loc: LocImpl(line: -1)))
+                .key(a.line);
+            final _args = a.args;
+            if (_args != null) {
+              for (final x in _args) {
+                self(x);
+              }
+            }
+            get_or_set(const TokenImpl(type: TokenType.IDENTIFIER, lexeme: 'super', loc: LocImpl(line: -1)))
+                .key(a.line);
+            if (_args != null) {
+              this.function.chunk.emit_super_invoke(name, _args.length, a.line);
+            } else {
+              this.function.chunk.emit_get_super(name, a.line);
+            }
+          },
+          composite: (final a) {
+            for (final x in a.exprs) {
+              self(x);
+            }
+          },
+        );
+      }
+
+      void compile_vari(
+        final DeclarationVari a,
+      ) {
+        for (final x in a.exprs) {
+          final global = this.make_variable(x.key);
+          compile_expr(x.value);
+          this.define_variable(global, line: a.line);
+        }
+      }
+
+      T wrap_in_scope<T>({
+        required final T Function() fn,
+        required final int line,
+      }) {
+        this.scope_depth++;
+        final val = fn();
+        this.scope_depth--;
+        while (this.locals.isNotEmpty && this.locals.last.depth > this.scope_depth) {
+          if (this.locals.last.is_captured) {
+            this.function.chunk.emit_close_upvalue(line);
+          } else {
+            this.function.chunk.emit_pop(line);
+          }
+          this.locals.removeLast();
+        }
+        return val;
+      }
+
+      void compile_stmt(
+        final Stmt stmt,
+      ) {
+        stmt.match(
+          output: (final a) {
+            compile_expr(a.expr);
+            this.function.chunk.emit_print(a.line);
+          },
+          ret: (final a) {
+            final expr = a.expr;
+            if (expr == null) {
+              final line = a.line;
+              if (this.is_initializer) {
+                this.function.chunk.emit_return_local(line);
+              } else {
+                this.function.chunk.emit_return_nil(line);
+              }
+            } else {
+              if (this.is_initializer) {
+                debug.error_at(a.kw, "Can't return a value from an initializer");
+              }
+              compile_expr(expr);
+              this.function.chunk.emit_return(a.line);
+            }
+          },
+          expr: (final a) {
+            compile_expr(a.expr);
+            this.function.chunk.emit_pop(a.line);
+          },
+          loop: (final a) => wrap_in_scope(
+            fn: () {
+              final left = a.left;
+              final line = a.line;
+              if (left != null) {
+                left.match(
+                  vari: (final a) {
+                    compile_vari(
+                      a.decl,
+                    );
+                  },
+                  expr: (final a) {
+                    compile_expr(a.expr);
+                    this.function.chunk.emit_pop(line);
+                  },
+                );
+              }
+              int loop_start = this.function.chunk.code.length;
+              int exit_jump = -1;
+              final center = a.center;
+              if (center != null) {
+                compile_expr(center);
+                exit_jump = this.function.chunk.emit_jump_if_false(
+                      line,
+                    );
+                this.function.chunk.emit_pop(line);
+              }
+              final _right = a.right;
+              if (_right != null) {
+                final body_jump = this.function.chunk.emit_jump(
+                      line,
+                    );
+                final increment_start = this.function.chunk.code.length;
+                final _expr = _right;
+                compile_expr(_expr);
+                this.function.chunk.emit_pop(line);
+                this.emit_loop(a.right_kw, loop_start, line);
+                loop_start = increment_start;
+                this.patch_jump(a.right_kw, body_jump);
+              }
+              final _stmt = a.body;
+              compile_stmt(_stmt);
+              this.emit_loop(a.end_kw, loop_start, line);
+              if (exit_jump != -1) {
+                this.patch_jump(a.end_kw, exit_jump);
+                this.function.chunk.emit_pop(line);
+              }
+            },
+            line: a.line,
+          ),
+          loop2: (final a) => wrap_in_scope(
+            fn: () {
+              this.make_variable(a.key_name);
+              final line = a.line;
+              this.function.chunk.emit_nil(line);
+              this.define_variable(0, line: line); // Remove 0
+              final stack_idx = this.locals.length - 1;
+              final value_name = a.value_name;
+              if (value_name != null) {
+                this.make_variable(value_name);
+                this.function.chunk.emit_nil(line);
+                this.define_variable(0, line: line);
+              } else {
+                this.add_local(
+                  const TokenImpl(type: TokenType.IDENTIFIER, lexeme: '_for_val_', loc: LocImpl(line: -1)),
+                );
+                // Emit a zero to permute val & key
+                this.function.chunk.emit_constant(
+                      this.make_constant(
+                        const TokenImpl(
+                            type: TokenType.IDENTIFIER, lexeme: "INVALID", loc: LocImpl(line: -1)),
+                        0,
+                      ),
+                      line,
+                    );
+                this.mark_local_variable_initialized();
+              }
+              // Now add two dummy local variables. Idx & entries
+              this.add_local(
+                const TokenImpl(type: TokenType.IDENTIFIER, lexeme: '_for_idx_', loc: LocImpl(line: -1)),
+              );
+              this.function.chunk.emit_nil(line);
+              this.mark_local_variable_initialized();
+              this.add_local(
+                const TokenImpl(type: TokenType.IDENTIFIER, lexeme: '_for_iterable_', loc: LocImpl(line: -1)),
+              );
+              this.function.chunk.emit_nil(line);
+              this.mark_local_variable_initialized();
+              compile_expr(a.center);
+              final loop_start = this.function.chunk.code.length;
+              this.function.chunk.emit_container_iterate(stack_idx, line);
+              final exit_jump = this.function.chunk.emit_jump_if_false(line);
+              this.function.chunk.emit_pop(line);
+              final body = a.body;
+              compile_stmt(body);
+              this.emit_loop(a.exit_token, loop_start, line);
+              this.patch_jump(a.exit_token, exit_jump);
+              this.function.chunk.emit_pop(line);
+            },
+            line: a.line,
+          ),
+          block: (final a) => wrap_in_scope(
+            fn: () {
+              for (final x in a.block) {
+                debug.restore();
+                compile_declaration(x);
+              }
+            },
+            line: a.line,
+          ),
+          whil: (final a) {
+            final loop_start = this.function.chunk.code.length;
+            compile_expr(a.expr);
+            final line = a.line;
+            final exit_jump = this.function.chunk.emit_jump_if_false(
+                  line,
+                );
+            this.function.chunk.emit_pop(line);
+            final stmt = a.stmt;
+            compile_stmt(stmt);
+            this.emit_loop(a.exit_kw, loop_start, line);
+            this.patch_jump(a.exit_kw, exit_jump);
+            this.function.chunk.emit_pop(line);
+          },
+          conditional: (final a) {
+            compile_expr(a.expr);
+            final then_jump = this.function.chunk.emit_jump_if_false(a.line);
+            this.function.chunk.emit_pop(a.line);
+            compile_stmt(a.stmt);
+            final else_jump = this.function.chunk.emit_jump(
+                  a.line,
+                );
+            this.patch_jump(a.if_kw, then_jump);
+            this.function.chunk.emit_pop(a.line);
+            final other = a.other;
+            if (other != null) {
+              compile_stmt(other);
+            }
+            this.patch_jump(a.else_kw, else_jump);
+          },
+        );
+      }
+
+      decl.match(
+        clazz: (final a) {
+          final name_constant = this.make_constant(
+            a.name,
+            a.name.lexeme,
+          );
+          this.current_class = _ClassCompiler(
+            enclosing: this.current_class,
+            name: a.name,
+            has_superclass: a.superclass_name != null,
+          );
+          this.declare_local_variable(a.name);
+          this.function.chunk.emit_class(name_constant, a.line);
+          this.define_variable(name_constant, line: a.line);
+          wrap_in_scope(
+            fn: () {
+              final superclass_name = a.superclass_name;
+              if (superclass_name != null) {
+                final class_name = this.current_class!.name!;
+                get_or_set(superclass_name).key(a.line);
+                if (class_name.lexeme == superclass_name.lexeme) {
+                  debug.error_at(superclass_name, "A class can't inherit from itself");
+                }
+                this.add_local(
+                  const TokenImpl(type: TokenType.IDENTIFIER, lexeme: 'super', loc: LocImpl(line: -1)),
+                );
+                this.define_variable(0, line: a.line);
+                get_or_set(class_name).key(a.line);
+                this.function.chunk.emit_inherit(a.line);
+              }
+              get_or_set(a.name).key(a.line);
+              final functions = a.functions;
+              for (final x in functions) {
+                visit_fn(x.name.lexeme == 'init', false, x.block, x.line);
+                final line = x.line;
+                this.function.chunk.emit_method(this.make_constant(x.name, x.name.lexeme), line);
+              }
+              this.function.chunk.emit_pop(a.line);
+              this.current_class = this.current_class!.enclosing;
+              return functions;
+            },
+            line: a.line,
+          );
+        },
+        fun: (final a) {
+          final global = this.make_variable(a.name);
+          this.mark_local_variable_initialized();
+          visit_fn(false, true, a.block, a.line);
+          this.define_variable(global, line: a.line);
+        },
+        vari: (final a) => compile_vari(
+          a,
+        ),
+        stmt: (final a) => compile_stmt(
+          a.stmt,
+        ),
+      );
+    }
+
+    for (final x in compilation_unit) {
+      debug.restore();
+      compile_declaration(x);
+    }
+    // endregion
+    // region finish
+    if (this.is_initializer) {
+      this.function.chunk.emit_return_local(last_line);
+    } else {
+      this.function.chunk.emit_return_nil(last_line);
+    }
+    if (debug.errors.isEmpty && trace_bytecode) {
+      debug.disassemble_chunk(
+        this.function.chunk,
+        this.function.name ?? '<script>',
+      );
+    }
+    if (this.enclosing != null) {
+      final _enclosing = this.enclosing!;
+      _enclosing.function.chunk.emit_closure(
+        _enclosing.make_constant(
+          const TokenImpl(type: TokenType.IDENTIFIER, lexeme: "INVALID", loc: LocImpl(line: -1)),
+          this.function,
+        ),
+        last_line,
+      );
+      for (final x in this.upvalues) {
+        _enclosing.function.chunk.emit_upvalue(
+          () {
+            if (x.is_local) {
+              return 1;
+            } else {
+              return 0;
+            }
+          }(),
+          x.index,
+          last_line,
+        );
+      }
+      return this.function;
+    } else {
+      return this.function;
+    }
+    // endregion
   }
 }
 
@@ -912,24 +915,9 @@ abstract class _Compiler {
 
   bool get is_initializer;
 
-  void emit_loop(
-    final Token previous,
-    final int loop_start,
-    final int line,
-  );
-
   int make_constant(
     final Token token,
     final Object? value,
-  );
-
-  void patch_jump(
-    final Token token,
-    final int offset,
-  );
-
-  void add_local(
-    final Token name,
   );
 
   int? resolve_local(
@@ -939,30 +927,14 @@ abstract class _Compiler {
   int? resolve_upvalue(
     final Token name,
   );
-
-  void mark_local_variable_initialized();
-
-  void define_variable(
-    final int global, {
-    required final int line,
-    final int peek_dist = 0,
-  });
-
-  void declare_local_variable(
-    final Token name,
-  );
-
-  int make_variable(
-    final Token name,
-  );
 }
 
 class _ClassCompiler {
   final _ClassCompiler? enclosing;
   final Token? name;
-  bool has_superclass;
+  final bool has_superclass;
 
-  _ClassCompiler({
+  const _ClassCompiler({
     required final this.enclosing,
     required final this.name,
     required final this.has_superclass,
@@ -982,7 +954,7 @@ _Local _init_local(
           return 'this';
         }
       }(),
-      loc: const LocImpl(-1),
+      loc: const LocImpl(line: -1),
     ),
     depth: 0,
     is_captured: false,

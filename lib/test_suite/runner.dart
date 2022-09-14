@@ -2,22 +2,14 @@ import 'dart:io';
 
 import 'package:path/path.dart';
 
-import '../arrows/fundamental/ast_to_objfunction.dart';
-
-// TODO remove this.
+import '../arrows/fundamental/ast_to_objfunction.dart' show ast_to_objfunction;
 import '../arrows/fundamental/objfunction_to_output.dart' show DloxVM;
-
-// TODO remove this.
-import '../arrows/fundamental/tokens_to_ast.dart';
-
-// TODO remove this.
+import '../domains/ast.dart' show CompilationUnit;
 import '../domains/errors.dart' show Debug;
-
-// TODO remove this.
 import '../domains/tokens.dart' show Token;
 
 // TODO have fixtures for the lexer in the style of esprima.
-// TODO have a benchmark suite.
+// TODO use files from dart.
 abstract class DLoxTestSuite {
   static void run<R>({
     required final DLoxTestSuiteDependencies deps,
@@ -32,7 +24,7 @@ abstract class DLoxTestSuite {
     );
     final dir_list = dir_contents(
       Directory(
-        deps.dlox_lib_path.resolve("testsuite").path,
+        deps.dlox_lib_path.resolve("test_suite").path,
       ),
     );
     for (int k = 0; k < dir_list.length; k++) {
@@ -60,11 +52,8 @@ abstract class DLoxTestSuite {
                   final debug = Debug(
                     silent: true,
                   );
-                  final tokens = deps.lexer(source);
-                  final parser = tokens_to_ast(
-                    tokens: tokens,
-                    debug: debug,
-                  );
+                  final tokens = deps.code_to_tokens(source);
+                  final parser = deps.tokens_to_ast(tokens, debug);
                   final compiler_result = ast_to_objfunction(
                     compilation_unit: parser.key,
                     last_line: parser.value,
@@ -189,22 +178,28 @@ abstract class DLoxTestSuite {
   ) {
     if (l1.length != l2.length) {
       return false;
-    }
-    for (int k = 0; k < l1.length; k++) {
-      if (l1[k] != l2[k]) {
-        return false;
+    } else {
+      for (int k = 0; k < l1.length; k++) {
+        if (l1[k] != l2[k]) {
+          return false;
+        }
       }
+      return true;
     }
-    return true;
   }
 }
 
 class DLoxTestSuiteDependencies {
-  final List<Token> Function(String) lexer;
+  final List<Token> Function(String) code_to_tokens;
+  final MapEntry<CompilationUnit, int> Function(
+    List<Token> tokens,
+    Debug debug,
+  ) tokens_to_ast;
   final Uri dlox_lib_path;
 
   const DLoxTestSuiteDependencies({
-    required final this.lexer,
+    required final this.code_to_tokens,
+    required final this.tokens_to_ast,
     required final this.dlox_lib_path,
   });
 }

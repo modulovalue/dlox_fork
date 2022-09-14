@@ -123,11 +123,9 @@ class DloxVM {
 
   void set_function(
     final DloxFunction? function,
-    final List<LangError> errors,
-    [
-      final DLoxVMFunctionParams params = const DLoxVMFunctionParams(),
-    ]
-  ) {
+    final List<LangError> errors, [
+    final DLoxVMFunctionParams params = const DLoxVMFunctionParams(),
+  ]) {
     _reset();
     // Set compiler result
     if (errors.isNotEmpty) {
@@ -156,7 +154,10 @@ class DloxVM {
         globals.data.addAll(params.globals!);
       }
       // Init VM.
-      final closure = DloxClosure(fun!);
+      final closure = DloxClosure(
+        function: fun!,
+        upvalues: List<DloxUpvalue?>.filled(fun.chunk.upvalue_count, null),
+      );
       push(closure);
       if (params.args != null) {
         params.args!.forEach(push);
@@ -223,7 +224,10 @@ class DloxVM {
       stack[stack_top - arg_count - 1] = callee.receiver;
       return call(callee.method, arg_count);
     } else if (callee is DloxClass) {
-      stack[stack_top - arg_count - 1] = DloxInstance(klass: callee);
+      stack[stack_top - arg_count - 1] = DloxInstance(
+        klass: callee,
+        fields: DloxTable(),
+      );
       final initializer = callee.methods.get_val(INIT_STRING);
       if (initializer != null) {
         return call(initializer as DloxClosure, arg_count);
@@ -418,7 +422,7 @@ class DloxVM {
     if (upvalue != null && upvalue.location == localIdx) {
       return upvalue;
     } else {
-      final created_upvalue = DloxUpvalue(localIdx);
+      final created_upvalue = DloxUpvalue(localIdx, DloxNil);
       created_upvalue.next = upvalue;
       if (prev_upvalue == null) {
         open_upvalues = created_upvalue;
@@ -510,7 +514,7 @@ class DloxVM {
       runtime_error('Index must be a number');
       return null;
     } else {
-      var idx = idxObj.toInt();
+      int idx = idxObj.toInt();
       if (idx < 0) idx = length + idx;
       final max = fromStart ? length - 1 : length;
       if (idx < 0 || idx > max) {
@@ -574,7 +578,7 @@ class DloxVM {
         // Trace execution if needed
         if (trace_execution) {
           trace_debug.stdwrite('          ');
-          for (var k = 0; k < stack_top; k++) {
+          for (int k = 0; k < stack_top; k++) {
             trace_debug.stdwrite('[ ');
             trace_debug.print_value(stack[k]);
             trace_debug.stdwrite(' ]');
@@ -832,9 +836,12 @@ class DloxVM {
             }
           case DloxOpCode.CLOSURE:
             final function = (read_constant(frame) as DloxFunction?)!;
-            final closure = DloxClosure(function);
+            final closure = DloxClosure(
+              function: function,
+              upvalues: List<DloxUpvalue?>.filled(function.chunk.upvalue_count, null),
+            );
             push(closure);
-            for (int i = 0; i < closure.upvalue_count; i++) {
+            for (int i = 0; i < closure.upvalues.length; i++) {
               final isLocal = read_byte(frame);
               final index = read_byte(frame);
               if (isLocal == 1) {
@@ -885,7 +892,7 @@ class DloxVM {
           case DloxOpCode.LIST_INIT:
             final valCount = read_byte(frame);
             final arr = <dynamic>[];
-            for (var k = 0; k < valCount; k++) {
+            for (int k = 0; k < valCount; k++) {
               arr.add(peek(valCount - k - 1));
             }
             stack_top -= valCount;
@@ -901,7 +908,7 @@ class DloxVM {
                 return runtime_error('Invalid list initializer');
               } else {
                 final arr = <dynamic>[];
-                for (var k = start; k < end; k++) {
+                for (double k = start; k < end; k++) {
                   arr.add(k);
                 }
                 stack_top -= 2;
@@ -912,7 +919,7 @@ class DloxVM {
           case DloxOpCode.MAP_INIT:
             final valCount = read_byte(frame);
             final map = <dynamic, dynamic>{};
-            for (var k = 0; k < valCount; k++) {
+            for (int k = 0; k < valCount; k++) {
               map[peek((valCount - k - 1) * 2 + 1)] = peek((valCount - k - 1) * 2);
             }
             stack_top -= 2 * valCount;
@@ -953,10 +960,10 @@ class DloxVM {
             push(val);
             break;
           case DloxOpCode.CONTAINER_GET_RANGE:
-            var bIdx = pop();
-            var aIdx = pop();
+            Object? bIdx = pop();
+            Object? aIdx = pop();
             final container = pop();
-            var length = 0;
+            int length = 0;
             if (container is List) {
               length = container.length;
             } else if (container is String) {
@@ -980,8 +987,8 @@ class DloxVM {
             final idxIdx = valIdx + 2;
             final iterableIdx = valIdx + 3;
             final containerIdx = valIdx + 4;
-            // Retreive data
-            var idxObj = stack[frame.slots_idx + idxIdx];
+            // Retrieve data
+            Object? idxObj = stack[frame.slots_idx + idxIdx];
             // Initialize
             if (idxObj == DloxNil) {
               final container = stack[frame.slots_idx + containerIdx];

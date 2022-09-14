@@ -1,21 +1,21 @@
 class DloxFunction {
   final String? name;
   final DloxChunk<int> chunk;
-  int arity;
-  int upvalue_count;
+  final int arity;
 
-  DloxFunction({
+  const DloxFunction({
     required final this.name,
-  })  : upvalue_count = 0,
-        arity = 0,
-        chunk = DloxChunk();
+    required final this.arity,
+    required final this.chunk,
+  });
 }
 
 class DloxChunk<INDEX> {
   final List<MapEntry<int, INDEX>> code;
   final DloxHeap heap;
+  int upvalue_count;
 
-  DloxChunk() : code = [], heap = DloxHeap();
+  DloxChunk() : code = [], heap = DloxHeap(), upvalue_count = 0;
 
   void _write(
     final int byte,
@@ -458,22 +458,18 @@ class DloxUpvalue {
 
   DloxUpvalue(
     final this.location,
-  ) : closed = DloxNil;
+    final this.closed,
+  );
 }
 
 class DloxClosure {
   final DloxFunction function;
   final List<DloxUpvalue?> upvalues;
-  final int upvalue_count;
 
-  DloxClosure(
-    final this.function,
-  ) :
-    upvalues = List<DloxUpvalue?>.generate(
-      function.upvalue_count,
-      (final index) => null,
-    ),
-    upvalue_count = function.upvalue_count;
+  const DloxClosure({
+    required final this.function,
+    required final this.upvalues,
+  });
 }
 
 class DloxClass {
@@ -491,9 +487,10 @@ class DloxInstance {
   DloxClass? klass;
 
   DloxInstance({
+    required final this.fields,
     final this.klass,
     final this.klass_name,
-  }) : fields = DloxTable();
+  });
 }
 
 class DloxBoundMethod {

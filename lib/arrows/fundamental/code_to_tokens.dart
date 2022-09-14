@@ -19,36 +19,47 @@ List<Token> run_lexer({
 
 class _Lexer {
   String source;
-  int start = 0;
-  int current = 0;
-  Loc loc = const LocImpl(0);
-
-  // Mark line as comment
-  bool comment_line = false;
+  int start;
+  int current;
+  Loc loc;
+  bool line_is_comment;
 
   _Lexer._({
     required final this.source,
-  });
+  })  : start = 0,
+        current = 0,
+        loc = const LocImpl(
+          line: 0,
+        ),
+        line_is_comment = false;
 
   static bool is_digit(
     final String? c,
   ) {
-    if (c == null) return false;
-    return '0'.compareTo(c) <= 0 && '9'.compareTo(c) >= 0;
+    if (c == null) {
+      return false;
+    } else {
+      return '0'.compareTo(c) <= 0 && '9'.compareTo(c) >= 0;
+    }
   }
 
   static bool is_alpha(
     final String? c,
   ) {
-    if (c == null) return false;
-    return ('a'.compareTo(c) <= 0 && 'z'.compareTo(c) >= 0) ||
-        ('A'.compareTo(c) <= 0 && 'Z'.compareTo(c) >= 0) ||
-        (c == '_');
+    if (c == null) {
+      return false;
+    } else {
+      return ('a'.compareTo(c) <= 0 && 'z'.compareTo(c) >= 0) ||
+          ('A'.compareTo(c) <= 0 && 'Z'.compareTo(c) >= 0) ||
+          (c == '_');
+    }
   }
 
   void new_line() {
-    loc = LocImpl(loc.line + 1);
-    comment_line = false;
+    loc = LocImpl(
+      line: loc.line + 1,
+    );
+    line_is_comment = false;
   }
 
   bool get is_at_end {
@@ -58,15 +69,17 @@ class _Lexer {
   String? get peek {
     if (is_at_end) {
       return null;
+    } else {
+      return char_at(current);
     }
-    return char_at(current);
   }
 
   String? get peek_next {
     if (current >= source.length - 1) {
       return null;
+    } else {
+      return char_at(current + 1);
     }
-    return char_at(current + 1);
   }
 
   String char_at(
@@ -83,43 +96,56 @@ class _Lexer {
   bool match(
     final String expected,
   ) {
-    if (is_at_end) return false;
-    if (peek != expected) return false;
-    current++;
-    return true;
+    if (is_at_end) {
+      return false;
+    } else if (peek != expected) {
+      return false;
+    } else {
+      current++;
+      return true;
+    }
   }
 
   Token make_token(
     final TokenType type,
   ) {
-    var str = source.substring(start, current);
-    if (type == TokenType.STRING) str = str.substring(1, str.length - 1);
-    final token = TokenImpl(type: type, loc: loc, lexeme: str);
-    loc = LocImpl(loc.line);
+    String str = source.substring(start, current);
+    if (type == TokenType.STRING) {
+      str = str.substring(1, str.length - 1);
+    }
+    final token = TokenImpl(
+      type: type,
+      loc: loc,
+      lexeme: str,
+    );
+    loc = LocImpl(
+      line: loc.line,
+    );
     return token;
   }
 
   Token error_token(
     final String message,
   ) {
-    return TokenImpl(type: TokenType.ERROR, loc: loc, lexeme: message);
+    return TokenImpl(
+      type: TokenType.ERROR,
+      loc: loc,
+      lexeme: message,
+    );
   }
 
   void skip_whitespace() {
     for (;;) {
-      final c = peek;
-      switch (c) {
+      switch (peek) {
         case ' ':
         case '\r':
         case '\t':
           advance();
           break;
-
         case '\n':
           new_line();
           advance();
           break;
-
         default:
           return;
       }
@@ -134,8 +160,9 @@ class _Lexer {
     if (current - this.start == start + rest.length &&
         source.substring(this.start + start, this.start + start + rest.length) == rest) {
       return type;
+    } else {
+      return TokenType.IDENTIFIER;
     }
-    return TokenType.IDENTIFIER;
   }
 
   TokenType identifier_type() {
@@ -258,60 +285,70 @@ class _Lexer {
   Token scan_token() {
     skip_whitespace();
     start = current;
-    if (is_at_end) return make_token(TokenType.EOF);
-    final c = advance();
-    if (c == '/' && match('/')) {
-      // Consume comment
-      comment_line = true;
-      return scan_token();
+    if (is_at_end) {
+      return make_token(TokenType.EOF);
+    } else {
+      final c = advance();
+      if (c == '/' && match('/')) {
+        // Consume comment.
+        line_is_comment = true;
+        return scan_token();
+      } else {
+        if (line_is_comment) {
+          return comment();
+        } else if (is_alpha(c)) {
+          return identifier();
+        } else if (is_digit(c)) {
+          return number();
+        } else {
+          switch (c) {
+            case '(':
+              return make_token(TokenType.LEFT_PAREN);
+            case ')':
+              return make_token(TokenType.RIGHT_PAREN);
+            case '[':
+              return make_token(TokenType.LEFT_BRACK);
+            case ']':
+              return make_token(TokenType.RIGHT_BRACK);
+            case '{':
+              return make_token(TokenType.LEFT_BRACE);
+            case '}':
+              return make_token(TokenType.RIGHT_BRACE);
+            case ';':
+              return make_token(TokenType.SEMICOLON);
+            case ',':
+              return make_token(TokenType.COMMA);
+            case '.':
+              return make_token(TokenType.DOT);
+            case '-':
+              return make_token(TokenType.MINUS);
+            case '+':
+              return make_token(TokenType.PLUS);
+            case '/':
+              return make_token(TokenType.SLASH);
+            case '*':
+              return make_token(TokenType.STAR);
+            case '!':
+              return make_token(match('=') ? TokenType.BANG_EQUAL : TokenType.BANG);
+            case '=':
+              return make_token(match('=') ? TokenType.EQUAL_EQUAL : TokenType.EQUAL);
+            case '<':
+              return make_token(match('=') ? TokenType.LESS_EQUAL : TokenType.LESS);
+            case '>':
+              return make_token(match('=') ? TokenType.GREATER_EQUAL : TokenType.GREATER);
+            case '"':
+              return string();
+            case ':':
+              return make_token(TokenType.COLON);
+            case '%':
+              return make_token(TokenType.PERCENT);
+            case '^':
+              return make_token(TokenType.CARET);
+            default:
+              return error_token('Unexpected character: $c.');
+          }
+        }
+      }
     }
-    if (comment_line) return comment();
-    if (is_alpha(c)) return identifier();
-    if (is_digit(c)) return number();
-    switch (c) {
-      case '(':
-        return make_token(TokenType.LEFT_PAREN);
-      case ')':
-        return make_token(TokenType.RIGHT_PAREN);
-      case '[':
-        return make_token(TokenType.LEFT_BRACK);
-      case ']':
-        return make_token(TokenType.RIGHT_BRACK);
-      case '{':
-        return make_token(TokenType.LEFT_BRACE);
-      case '}':
-        return make_token(TokenType.RIGHT_BRACE);
-      case ';':
-        return make_token(TokenType.SEMICOLON);
-      case ',':
-        return make_token(TokenType.COMMA);
-      case '.':
-        return make_token(TokenType.DOT);
-      case '-':
-        return make_token(TokenType.MINUS);
-      case '+':
-        return make_token(TokenType.PLUS);
-      case '/':
-        return make_token(TokenType.SLASH);
-      case '*':
-        return make_token(TokenType.STAR);
-      case '!':
-        return make_token(match('=') ? TokenType.BANG_EQUAL : TokenType.BANG);
-      case '=':
-        return make_token(match('=') ? TokenType.EQUAL_EQUAL : TokenType.EQUAL);
-      case '<':
-        return make_token(match('=') ? TokenType.LESS_EQUAL : TokenType.LESS);
-      case '>':
-        return make_token(match('=') ? TokenType.GREATER_EQUAL : TokenType.GREATER);
-      case '"':
-        return string();
-      case ':':
-        return make_token(TokenType.COLON);
-      case '%':
-        return make_token(TokenType.PERCENT);
-      case '^':
-        return make_token(TokenType.CARET);
-    }
-    return error_token('Unexpected character: $c.');
   }
 }

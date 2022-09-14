@@ -8,7 +8,7 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
   required final List<Token> tokens,
   required final Debug debug,
 }) {
-  final parsed = _DloxParserImpl(
+  final parsed = _DloxParser(
     tokens: tokens,
     debug: debug,
   );
@@ -19,21 +19,20 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
 }
 
 // region private
-class _DloxParserImpl implements _DloxParser {
+class _DloxParser {
   final List<Token> tokens;
   final Debug debug;
   Token? current;
   Token? previous;
   int current_idx;
 
-  _DloxParserImpl({
+  _DloxParser({
     required final this.tokens,
     required final this.debug,
-  })  : current_idx = 0 {
+  }) : current_idx = 0 {
     advance();
   }
 
-  @override
   int get previous_line {
     return previous!.loc.line;
   }
@@ -50,7 +49,6 @@ class _DloxParserImpl implements _DloxParser {
     }
   }
 
-  @override
   CompilationUnit parse_compilation_unit() {
     bool check(
       final TokenType type,
@@ -165,9 +163,9 @@ class _DloxParserImpl implements _DloxParser {
                         name: name,
                         child: () {
                           bool match_pair(
-                              final TokenType first,
-                              final TokenType second,
-                              ) {
+                            final TokenType first,
+                            final TokenType second,
+                          ) {
                             if (check(first)) {
                               if (current_idx >= tokens.length) {
                                 return false;
@@ -304,7 +302,7 @@ class _DloxParserImpl implements _DloxParser {
                   while (precedence.index <= _get_precedence(current!.type).index) {
                     advance();
                     exprs.add(
-                          () {
+                      () {
                         switch (previous!.type) {
                           case TokenType.LEFT_BRACK:
                             final first = () {
@@ -484,7 +482,7 @@ class _DloxParserImpl implements _DloxParser {
                   consume(TokenType.IDENTIFIER, 'Expect variable name');
                   yield MapEntry(
                     previous!,
-                        () {
+                    () {
                       if (match(TokenType.EQUAL)) {
                         return parse_expression();
                       } else {
@@ -723,19 +721,16 @@ class _DloxParserImpl implements _DloxParser {
             }(),
             line: previous_line,
           );
-        }
-        else if (match(TokenType.FUN)) {
+        } else if (match(TokenType.FUN)) {
           consume(TokenType.IDENTIFIER, 'Expect function name');
           return DeclarationFun(
             name: previous!,
             block: parse_function_block(),
             line: previous_line,
           );
-        }
-        else if (match(TokenType.VAR)) {
+        } else if (match(TokenType.VAR)) {
           return parse_var_declaration();
-        }
-        else {
+        } else {
           return DeclarationStmt(
             stmt: parse_statement(),
           );
@@ -787,12 +782,6 @@ class _DloxParserImpl implements _DloxParser {
           .toList(),
     );
   }
-}
-
-abstract class _DloxParser {
-  int get previous_line;
-
-  CompilationUnit parse_compilation_unit();
 }
 
 enum _DloxPrecedence {

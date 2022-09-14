@@ -345,7 +345,7 @@ class Debug {
         print_value(chunk.heap.constant_at(constant));
         stdwrite('\n');
         final function = (chunk.heap.constant_at(constant) as DloxFunction?)!;
-        for (int j = 0; j < function.upvalue_count; j++) {
+        for (int j = 0; j < function.chunk.upvalue_count; j++) {
           // ignore: parameter_assignments
           final is_local = chunk.code[offset++].key == 1;
           // ignore: parameter_assignments
