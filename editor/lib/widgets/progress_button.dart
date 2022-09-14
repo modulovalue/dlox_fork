@@ -5,24 +5,26 @@ class ProgressButton extends StatelessWidget {
   final double size;
   final Color color;
   final bool loading;
-  final Function onTap;
+  final void Function() onTap;
   final bool disabled;
 
-  ProgressButton({
-    this.icon,
-    this.loading,
-    this.onTap,
-    this.disabled = false,
-    this.color = Colors.white,
-    this.size = 28.0,
+  const ProgressButton({
+    required final this.icon,
+    required final this.loading,
+    required final this.onTap,
+    final this.disabled = false,
+    final this.color = Colors.white,
+    final this.size = 28.0,
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(
+    final BuildContext context,
+  ) {
     final button = IconButton(
       color: color,
       disabledColor: Colors.grey.shade700,
-      constraints: BoxConstraints(),
+      constraints: const BoxConstraints(),
       padding: EdgeInsets.zero,
       icon: Icon(icon),
       onPressed: !disabled ? onTap : null,
@@ -32,7 +34,7 @@ class ProgressButton extends StatelessWidget {
             valueColor: AlwaysStoppedAnimation<Color>(color),
             strokeWidth: 2,
           )
-        : SizedBox.shrink();
+        : const SizedBox.shrink();
     final progress = SizedBox(
       width: size,
       height: size,

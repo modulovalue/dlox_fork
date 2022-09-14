@@ -42,7 +42,7 @@ packages:
       name: code_text_field
       url: "https://pub.dartlang.org"
     source: hosted
-    version: "1.0.0-7"
+    version: "1.0.2"
   collection:
     dependency: transitive
     description:
@@ -64,6 +64,13 @@ packages:
       relative: true
     source: path
     version: "0.0.0"
+  extra_pedantic:
+    dependency: "direct dev"
+    description:
+      name: extra_pedantic
+      url: "https://pub.dartlang.org"
+    source: hosted
+    version: "2.0.0"
   fake_async:
     dependency: transitive
     description:
@@ -76,6 +83,13 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_font_icons:
+    dependency: "direct main"
+    description:
+      name: flutter_font_icons
+      url: "https://pub.dartlang.org"
+    source: hosted
+    version: "2.2.5"
   flutter_highlight:
     dependency: transitive
     description:
@@ -83,34 +97,6 @@ packages:
       url: "https://pub.dartlang.org"
     source: hosted
     version: "0.7.0"
-  flutter_icons:
-    dependency: "direct main"
-    description:
-      name: flutter_icons
-      url: "https://pub.dartlang.org"
-    source: hosted
-    version: "1.1.0"
-  flutter_keyboard_visibility:
-    dependency: transitive
-    description:
-      name: flutter_keyboard_visibility
-      url: "https://pub.dartlang.org"
-    source: hosted
-    version: "5.0.0"
-  flutter_keyboard_visibility_platform_interface:
-    dependency: transitive
-    description:
-      name: flutter_keyboard_visibility_platform_interface
-      url: "https://pub.dartlang.org"
-    source: hosted
-    version: "2.0.0"
-  flutter_keyboard_visibility_web:
-    dependency: transitive
-    description:
-      name: flutter_keyboard_visibility_web
-      url: "https://pub.dartlang.org"
-    source: hosted
-    version: "2.0.0"
   flutter_parsed_text:
     dependency: "direct main"
     description:
@@ -309,5 +295,5 @@ packages:
     source: hosted
     version: "2.1.1"
 sdks:
-  dart: ">=2.14.0 <3.0.0"
-  flutter: ">=1.22.0"
+  dart: ">=2.15.0-0 <3.0.0"
+  flutter: ">=1.26.0"

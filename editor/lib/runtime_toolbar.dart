@@ -1,20 +1,21 @@
-import 'package:editor/constants.dart';
-import 'package:editor/widgets/flushbar.dart';
-import 'package:editor/widgets/progress_button.dart';
-import 'package:editor/runtime.dart';
-import 'package:editor/widgets/toggle_button.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_icons/flutter_icons.dart';
+import 'package:flutter_font_icons/flutter_font_icons.dart';
 import 'package:provider/provider.dart';
+
+import 'constants.dart';
+import 'runtime.dart';
+import 'widgets/flushbar.dart';
+import 'widgets/progress_button.dart';
+import 'widgets/toggle_button.dart';
 
 class RuntimeToolbar extends StatefulWidget {
   final Layout layout;
-  final Function onClear;
+  final void Function() onClear;
 
   const RuntimeToolbar({
-    Key key,
-    this.layout,
-    this.onClear,
+    required final this.layout,
+    required final this.onClear,
+    final Key? key,
   }) : super(key: key);
 
   @override
@@ -23,47 +24,50 @@ class RuntimeToolbar extends StatefulWidget {
 
 class _RuntimeToolbarState extends State<RuntimeToolbar> {
   Widget buildRunBtn(
-    BuildContext context,
+    final BuildContext context,
   ) {
     final runtime = context.watch<Runtime>();
     final running = runtime.running;
     final isDone = runtime.done;
     IconData icon = MaterialIcons.play_arrow;
-    if (running)
+    if (running) {
       icon = MaterialIcons.stop;
-    else if (isDone) icon = MaterialCommunityIcons.refresh;
+    } else if (isDone) {
+      icon = MaterialCommunityIcons.refresh;
+    }
     return ProgressButton(
       icon: icon,
       loading: running,
       onTap: () {
-        if (running)
+        if (running) {
           runtime.stop();
-        else if (isDone)
+        } else if (isDone) {
           runtime.reset();
-        else
+        } else {
           runtime.run();
+        }
       },
     );
   }
 
-  Widget buildSpeedBtn(BuildContext context) {
+  Widget buildSpeedBtn(final BuildContext context) {
     final runtime = context.watch<Runtime>();
     final enabled = !runtime.vm_trace_enabled;
     final color = enabled ? Colors.grey.shade800 : Colors.transparent;
     final iconColor = enabled ? Colors.white : Colors.grey;
     final btn = RawMaterialButton(
       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      padding: EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
+      padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
       onPressed: () => runtime.toggle_vm_trace(),
-      constraints: BoxConstraints(minWidth: 0, minHeight: 0),
+      constraints: const BoxConstraints(minWidth: 0, minHeight: 0),
       child: Icon(MaterialCommunityIcons.speedometer, color: iconColor),
       fillColor: color,
       shape: RoundedRectangleBorder(
         side: BorderSide(color: Colors.grey.shade800),
-        borderRadius: BorderRadius.all(Radius.circular(8.0)),
+        borderRadius: const BorderRadius.all(Radius.circular(8.0)),
       ),
     );
-    double ips = runtime.average_ips.toDouble();
+    double ips = runtime.average_ips;
     var suffix = "";
     if (ips > 1000000) {
       ips /= 1000000;
@@ -76,7 +80,7 @@ class _RuntimeToolbarState extends State<RuntimeToolbar> {
     final text = InkWell(
       child: Text(
         "$ipsStr$suffix ips",
-        style: TextStyle(color: Colors.white, fontSize: 16.0),
+        style: const TextStyle(color: Colors.white, fontSize: 16.0),
       ),
       onTap: () {
         Flushbar.show(
@@ -87,35 +91,31 @@ class _RuntimeToolbarState extends State<RuntimeToolbar> {
     );
     return Row(children: [
       text,
-      SizedBox(width: 4.0),
+      const SizedBox(width: 4.0),
       btn,
     ]);
   }
 
   @override
-  Widget build(BuildContext context) {
-    final color = Colors.white;
-    final disabledColor = Colors.grey;
+  Widget build(final BuildContext context) {
+    const color = Colors.white;
+    const disabledColor = Colors.grey;
     final runtime = context.watch<Runtime>();
     final _step = () => runtime.step();
     final _clear = widget.onClear;
-
     final stepBtn = IconButton(
-      icon: Icon(MaterialCommunityIcons.debug_step_over),
+      icon: const Icon(MaterialCommunityIcons.debug_step_over),
       color: color,
       onPressed: runtime.running || runtime.done ? null : _step,
       disabledColor: disabledColor,
     );
-
     final clearBtn = IconButton(
-      icon: Icon(MaterialCommunityIcons.close),
+      icon: const Icon(MaterialCommunityIcons.close),
       color: color,
       onPressed: runtime.running ? null : _clear,
       disabledColor: disabledColor,
     );
-
     final runBtn = buildRunBtn(context);
-
     final toggleBtn = ToggleButton(
       leftIcon: MaterialCommunityIcons.monitor,
       leftEnabled: widget.layout.showStdout,
@@ -124,15 +124,13 @@ class _RuntimeToolbarState extends State<RuntimeToolbar> {
       rightEnabled: widget.layout.showVm,
       rightToggle: widget.layout.toggleVm,
     );
-
     final speedBtn = buildSpeedBtn(context);
-
     final row = Row(
       children: [
         stepBtn,
         runBtn,
         clearBtn,
-        Spacer(),
+        const Spacer(),
         speedBtn,
         toggleBtn,
       ],
@@ -150,18 +148,22 @@ class _RuntimeToolbarState extends State<RuntimeToolbar> {
 }
 
 class Layout {
-  final Function onUpdate;
+  final void Function() onUpdate;
   bool smallScreen = false;
   bool showEditor = true;
   bool showCompiler = true;
   bool showStdout = true;
   bool showVm = true;
 
-  Layout(this.onUpdate);
+  Layout(
+    final this.onUpdate,
+  );
 
-  void setScreenSize(Size size) {
-    bool smallScreen = size.width < 900;
-    bool update = this.smallScreen != smallScreen;
+  void setScreenSize(
+    final Size size,
+  ) {
+    final smallScreen = size.width < 900;
+    final update = this.smallScreen != smallScreen;
     this.smallScreen = smallScreen;
     if (update) {
       showEditor = true;

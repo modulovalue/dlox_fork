@@ -7,30 +7,35 @@ enum FlushbarType {
 
 class Flushbar {
   static void show(
-    BuildContext context,
-    String msg, {
-    FlushbarType type = FlushbarType.INFO,
+    final BuildContext context,
+    final String msg, {
+    final FlushbarType type = FlushbarType.INFO,
   }) {
-    final icon =
-        type == FlushbarType.INFO ? Icons.info_outline : Icons.error_outline;
-    final color =
-        type == FlushbarType.INFO ? Colors.blueAccent : Colors.redAccent;
+    final icon = type == FlushbarType.INFO ? Icons.info_outline : Icons.error_outline;
+    final color = type == FlushbarType.INFO ? Colors.blueAccent : Colors.redAccent;
     ScaffoldMessenger.of(context).removeCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Container(
-          padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-          margin: EdgeInsets.all(0.0),
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+          margin: const EdgeInsets.all(0.0),
           decoration: BoxDecoration(
             color: Colors.grey.shade900,
-            borderRadius: BorderRadius.all(Radius.circular(8.0)),
+            borderRadius: const BorderRadius.all(
+              Radius.circular(8.0),
+            ),
           ),
           child: Row(
             children: [
               Icon(icon, color: color),
-              SizedBox(width: 8.0),
+              const SizedBox(width: 8.0),
               Flexible(
-                child: Text(msg, style: TextStyle(fontSize: 16.0)),
+                child: Text(
+                  msg,
+                  style: const TextStyle(
+                    fontSize: 16.0,
+                  ),
+                ),
               ),
             ],
           ),

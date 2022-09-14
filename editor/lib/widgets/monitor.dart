@@ -1,24 +1,27 @@
-import 'package:editor/constants.dart';
-import 'package:editor/runtime.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_parsed_text/flutter_parsed_text.dart';
 import 'package:provider/provider.dart';
+
+import '../constants.dart';
+import '../runtime.dart';
 
 class Monitor extends StatefulWidget {
   final List<String> lines;
   final IconData icon;
   final String title;
   final bool autoScroll;
-  final Widget Function(Widget) placeholderBuilder;
+  final Widget Function(Widget)? placeholderBuilder;
 
-  Monitor({
-    Key key,
-    this.lines,
-    this.icon,
-    this.title,
-    this.placeholderBuilder,
-    this.autoScroll = true,
-  }) : super(key: key);
+  const Monitor({
+    required final this.lines,
+    required final this.icon,
+    required final this.title,
+    final Key? key,
+    final this.placeholderBuilder,
+    final this.autoScroll = true,
+  }) : super(
+    key: key,
+  );
 
   @override
   MonitorState createState() => MonitorState();
@@ -28,15 +31,15 @@ class MonitorState extends State<Monitor> {
   final ScrollController _scrollController = ScrollController();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(final BuildContext context,) {
     context.watch<Runtime>();
     final lv = ListView.builder(
       shrinkWrap: true,
       controller: _scrollController,
-      padding: EdgeInsets.all(8.0),
+      padding: const EdgeInsets.all(8.0),
       itemCount: widget.lines.length,
       reverse: widget.autoScroll,
-      itemBuilder: (context, k) {
+      itemBuilder: (final context, final k) {
         final idx = widget.autoScroll ? widget.lines.length - k - 1 : k;
         final parsed = ParsedText(
           text: widget.lines[idx],
@@ -48,36 +51,36 @@ class MonitorState extends State<Monitor> {
           parse: <MatchText>[
             MatchText(
               pattern: r"-?\d+(?:\.\d+)?",
-              style: TextStyle(
+              style: const TextStyle(
                 color: ColorTheme.numbers,
               ),
             ),
             MatchText(
               pattern: r"OP_[A-Z_]+",
-              style: TextStyle(
+              style: const TextStyle(
                 color: ColorTheme.functions,
               ),
             ),
             MatchText(
               pattern: r"==.+==",
-              style: TextStyle(color: ColorTheme.debugValues),
+              style: const TextStyle(color: ColorTheme.debugValues),
             ),
             MatchText(
               pattern: r"'.+'",
-              style: TextStyle(color: ColorTheme.strings),
+              style: const TextStyle(color: ColorTheme.strings),
             ),
             MatchText(
               pattern: r"true|false",
-              style: TextStyle(color: ColorTheme.numbers),
+              style: const TextStyle(color: ColorTheme.numbers),
             ),
             MatchText(
               pattern: r"(Runtime error)|(Compiler error)",
-              style: TextStyle(color: ColorTheme.error),
+              style: const TextStyle(color: ColorTheme.error),
             ),
           ],
         );
         return Padding(
-          padding: EdgeInsets.all(4.0),
+          padding: const EdgeInsets.all(4.0),
           child: parsed,
         );
       },
@@ -85,7 +88,7 @@ class MonitorState extends State<Monitor> {
     final col = Column(children: [
       Flexible(child: lv),
     ]);
-    Widget placeholder = SizedBox.shrink();
+    Widget placeholder = const SizedBox.shrink();
     if (widget.lines.isEmpty) {
       Widget child = Row(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -94,7 +97,7 @@ class MonitorState extends State<Monitor> {
             widget.icon,
             color: Colors.grey.shade300,
           ),
-          SizedBox(width: 20.0),
+          const SizedBox(width: 20.0),
           Text(
             widget.title,
             style: TextStyle(
@@ -104,8 +107,9 @@ class MonitorState extends State<Monitor> {
           ),
         ],
       );
-      if (widget.placeholderBuilder != null)
-        child = widget.placeholderBuilder(child);
+      if (widget.placeholderBuilder != null) {
+        child = widget.placeholderBuilder!(child);
+      }
       placeholder = Center(child: child);
     }
     return Container(

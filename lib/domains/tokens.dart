@@ -44,8 +44,9 @@ class TokenImpl implements Token {
 
   @override
   bool operator ==(
-      final Object o,
-      ) => o is Token && o.type == type && o.loc == loc && o.lexeme == lexeme;
+    final Object o,
+  ) =>
+      o is Token && o.type == type && o.loc == loc && o.lexeme == lexeme;
 
   @override
   int get hashCode => type.hashCode ^ loc.hashCode ^ lexeme.hashCode;
@@ -105,8 +106,6 @@ class TokenImpl implements Token {
     TokenType.VAR: 'var',
     TokenType.WHILE: 'while',
     TokenType.IN: 'in',
-    TokenType.BREAK: 'break',
-    TokenType.CONTINUE: 'continue',
 
     // Editor syntactic sugar (dummy tokens)
     TokenType.COMMENT: '<//>',
@@ -168,8 +167,6 @@ enum TokenType {
   VAR,
   WHILE,
   IN,
-  BREAK, // TODO: add in dlox?
-  CONTINUE, // TODO: add in dlox?
 
   // Editor syntactic sugar & helpers (dummy tokens)
   ERROR,
@@ -187,16 +184,16 @@ class LocImpl implements Loc {
   final int line;
 
   const LocImpl(
-      final this.line,
-      );
+    final this.line,
+  );
 
   @override
   String toString() => line.toString();
 
   @override
   bool operator ==(
-      final Object other,
-      ) {
+    final Object other,
+  ) {
     return (other is Loc) && other.line == line;
   }
 

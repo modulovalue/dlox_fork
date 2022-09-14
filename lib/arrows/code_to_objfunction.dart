@@ -9,19 +9,17 @@ DloxFunction source_to_dlox({
   required final Debug debug,
   required final bool trace_bytecode,
 }) {
-  final parser = DloxParserImpl(
-    tokens: run_lexer(
-      source: source,
-    ),
+  final tokens = run_lexer(
+    source: source,
+  );
+  final parser = tokens_to_ast(
+    tokens: tokens,
     debug: debug,
   );
-  // TODO have a custom error delegate dont pass on parser delegate.
-  // TODO use hidden parser
-  final parsed = parser.parse_compilation_unit();
   return ast_to_objfunction(
-    compilation_unit: parsed,
-    error_delegate: parser,
-    last_line: parser.previous_line,
+    compilation_unit: parser.key,
+    last_line: parser.value,
+    debug: debug,
     trace_bytecode: trace_bytecode,
   );
 }

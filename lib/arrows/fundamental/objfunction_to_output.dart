@@ -4,80 +4,100 @@ import 'dart:math';
 import '../../domains/errors.dart';
 import '../../domains/objfunction.dart';
 
+// region vm
 class DloxVM {
   static const String INIT_STRING = 'init';
-  final List<_CallFrame?> frames = List<_CallFrame?>.filled(_FRAMES_MAX, null);
-  final List<Object?> stack = List<Object?>.filled(_STACK_MAX, null);
 
-  // VM state
-  final List<RuntimeError> errors = [];
-  final DloxTable globals = DloxTable();
-  final DloxTable strings = DloxTable();
+  // region data
+  final List<_Dlox_VMCallFrame?> frames;
+  final List<Object?> stack;
+
+  // endregion
+  // region vm state
+  final List<RuntimeError> errors;
+  final DloxTable globals;
+  final DloxTable strings;
   DloxFunction? compiled_function;
-  int frame_count = 0;
-  int stack_top = 0;
+  int frame_count;
+  int stack_top;
   DloxUpvalue? open_upvalues;
 
-  // Debug variables
-  int step_count = 0;
-  int line = -1;
+  // endregion
+  // region debug variables
+  int step_count;
+  int line;
+  bool has_op;
 
-  // int skipLine = -1;
-  bool has_op = false;
-
-  // Debug API
-  bool trace_execution = false;
-  bool step_code = false;
+  // endregion
+  // region debug api
+  bool trace_execution;
+  bool step_code;
   final Debug err_debug;
   final Debug trace_debug;
   final Debug stdout;
 
+  // endregion
+
   DloxVM({
     required final bool silent,
   })  : err_debug = Debug(
-          silent,
+          silent: silent,
         ),
         trace_debug = Debug(
-          silent,
+          silent: silent,
         ),
         stdout = Debug(
-          silent,
-        ) {
+          silent: silent,
+        ),
+        step_code = false,
+        trace_execution = false,
+        has_op = false,
+        line = -1,
+        step_count = 0,
+        stack_top = 0,
+        frame_count = 0,
+        strings = DloxTable(),
+        globals = DloxTable(),
+        errors = [],
+        stack = List<Object?>.filled(_DLOXVM_STACK_MAX, null),
+        frames = List<_Dlox_VMCallFrame?>.filled(_DLOXVM_FRAMES_MAX, null) {
     _reset();
     for (int k = 0; k < frames.length; k++) {
-      frames[k] = _CallFrame();
+      frames[k] = _Dlox_VMCallFrame();
     }
   }
 
   RuntimeError add_error({
-    required final String? msg,
+    required final String msg,
     required final RuntimeError? link,
     required final int line,
   }) {
-    final err = RuntimeError(
+    final error = RuntimeError(
       line: line,
       msg: msg,
       link: link,
     );
-    errors.add(err);
-    err.dump(err_debug);
-    return err;
+    errors.add(error);
+    err_debug.write_error(error);
+    return error;
   }
 
-  InterpreterResult get_result(
-    final int line, {
-    final Object? returnValue,
+  DloxVMInterpreterResult get_result({
+    required final int line,
+    final Object? return_value,
   }) {
-    return InterpreterResult(
-      errors,
-      line,
-      step_count,
-      returnValue,
+    return DloxVMInterpreterResult(
+      errors: errors,
+      last_line: line,
+      step_count: step_count,
+      return_value: return_value,
     );
   }
 
-  InterpreterResult get result {
-    return get_result(line);
+  DloxVMInterpreterResult get result {
+    return get_result(
+      line: line,
+    );
   }
 
   void _reset() {
@@ -102,9 +122,11 @@ class DloxVM {
   }
 
   void set_function(
-    final DloxFunction function,
-    final List<CompilerError> errors,
-    final FunctionParams params,
+    final DloxFunction? function,
+    final List<LangError> errors,
+    [
+      final DLoxVMFunctionParams params = const DLoxVMFunctionParams(),
+    ]
   ) {
     _reset();
     // Set compiler result
@@ -116,7 +138,7 @@ class DloxVM {
       DloxFunction? fun = function;
       if (params.function != null) {
         final found_fun = () {
-          for (final x in function.chunk.constants) {
+          for (final x in function!.chunk.heap.all_constants) {
             if (x is DloxFunction && x.name == params.function) {
               return x;
             }
@@ -134,7 +156,7 @@ class DloxVM {
         globals.data.addAll(params.globals!);
       }
       // Init VM.
-      final closure = DloxClosure(fun);
+      final closure = DloxClosure(fun!);
       push(closure);
       if (params.args != null) {
         params.args!.forEach(push);
@@ -179,7 +201,7 @@ class DloxVM {
       runtime_error('Expected ${closure.function.arity} arguments but got ${arg_count}');
       return false;
     } else {
-      if (frame_count == _FRAMES_MAX) {
+      if (frame_count == _DLOXVM_FRAMES_MAX) {
         runtime_error('Stack overflow');
         return false;
       } else {
@@ -223,7 +245,7 @@ class DloxVM {
         stack_top -= arg_count + 1;
         push(res);
       } on _NativeError catch (e) {
-        runtime_error(e.format);
+        runtime_error(e.error);
         return false;
       }
       return true;
@@ -263,7 +285,7 @@ class DloxVM {
         push(rtn);
         return true;
       } on _NativeError catch (e) {
-        runtime_error(e.format);
+        runtime_error(e.error);
         return false;
       }
     }
@@ -285,7 +307,7 @@ class DloxVM {
         push(rtn);
         return true;
       } on _NativeError catch (e) {
-        runtime_error(e.format);
+        runtime_error(e.error);
         return false;
       }
     }
@@ -307,7 +329,7 @@ class DloxVM {
         push(rtn);
         return true;
       } on _NativeError catch (e) {
-        runtime_error(e.format);
+        runtime_error(e.error);
         return false;
       }
     }
@@ -319,12 +341,12 @@ class DloxVM {
     final int arg_count,
   ) {
     try {
-      final rtn = klass.call(name, stack, stack_top - arg_count, arg_count);
+      final rtn = klass.call_(name, stack, stack_top - arg_count, arg_count);
       stack_top -= arg_count + 1;
       push(rtn);
       return true;
     } on _NativeError catch (e) {
-      runtime_error(e.format);
+      runtime_error(e.error);
       return false;
     }
   }
@@ -433,29 +455,27 @@ class DloxVM {
     return value == DloxNil || (value is bool && !value);
   }
 
-  // Repace macros (slower -> try inlining)
   int read_byte(
-    final _CallFrame frame,
+    final _Dlox_VMCallFrame frame,
   ) {
-    return frame.chunk.code[frame.ip++];
+    return frame.chunk.code[frame.ip++].key;
   }
 
   int read_short(
-    final _CallFrame frame,
+    final _Dlox_VMCallFrame frame,
   ) {
-    // TODO: Optimisation - remove
     frame.ip += 2;
-    return frame.chunk.code[frame.ip - 2] << 8 | frame.chunk.code[frame.ip - 1];
+    return frame.chunk.code[frame.ip - 2].key << 8 | frame.chunk.code[frame.ip - 1].key;
   }
 
   Object? read_constant(
-    final _CallFrame frame,
+    final _Dlox_VMCallFrame frame,
   ) {
-    return frame.closure.function.chunk.constants[read_byte(frame)];
+    return frame.closure.function.chunk.heap.constant_at(read_byte(frame));
   }
 
   String? read_string(
-    final _CallFrame frame,
+    final _Dlox_VMCallFrame frame,
   ) {
     return read_constant(frame) as String?;
   }
@@ -506,16 +526,16 @@ class DloxVM {
     return frame_count == 0;
   }
 
-  InterpreterResult run() {
-    InterpreterResult? res;
+  DloxVMInterpreterResult run() {
+    DloxVMInterpreterResult? res;
     do {
       res = step_batch();
     } while (res == null);
     return res;
   }
 
-  InterpreterResult? step_batch({
-    final int batch_count = _BATCH_COUNT,
+  DloxVMInterpreterResult? step_batch({
+    final int batch_count = _DLOXVM_BATCH_COUNT,
   }) {
     // Setup
     if (frame_count == 0) {
@@ -526,29 +546,31 @@ class DloxVM {
       );
       return result;
     } else {
-      _CallFrame? frame = frames[frame_count - 1];
-      final stepCountLimit = step_count + batch_count;
+      _Dlox_VMCallFrame? frame = frames[frame_count - 1];
+      final step_count_limit = step_count + batch_count;
       // Main loop
-      while (step_count++ < stepCountLimit) {
+      while (step_count++ < step_count_limit) {
         // Setup current line
-        final frameLine = frame!.chunk.lines[frame.ip];
+        final frame_line = frame!.chunk.code[frame.ip].value;
         // Step code helper
         if (step_code) {
-          final instruction = frame.chunk.code[frame.ip];
+          final instruction = frame.chunk.code[frame.ip].key;
           final op = DloxOpCode.values[instruction];
           // Pause execution on demand
-          if (frameLine != line && has_op) {
+          if (frame_line != line && has_op) {
             // Newline detected, return
             // No need to set line to frameLine thanks to hasOp
             has_op = false;
-            return get_result(line);
+            return get_result(
+              line: line,
+            );
           }
           // A line is worth stopping on if it has one of those opts
           has_op |= op != DloxOpCode.POP && op != DloxOpCode.LOOP && op != DloxOpCode.JUMP;
         }
         // Update line
         final prevLine = line;
-        line = frameLine;
+        line = frame_line;
         // Trace execution if needed
         if (trace_execution) {
           trace_debug.stdwrite('          ');
@@ -645,7 +667,7 @@ class DloxVM {
               try {
                 value = instance.get_val(name);
               } on _NativeError catch (e) {
-                return runtime_error(e.format);
+                return runtime_error(e.error);
               }
             } else {
               return runtime_error('Only instances have properties');
@@ -767,7 +789,7 @@ class DloxVM {
             }
           case DloxOpCode.PRINT:
             final val = value_to_string(pop());
-            stdout.stdwriteln(val);
+            stdout.stdwriteln(val ?? "");
             break;
           case DloxOpCode.JUMP:
             final offset = read_short(frame);
@@ -833,7 +855,10 @@ class DloxVM {
             // ignore: invariant_booleans
             if (frame_count == 0) {
               pop();
-              return get_result(line, returnValue: res);
+              return get_result(
+                line: line,
+                return_value: res,
+              );
             } else {
               stack_top = frame.slots_idx;
               push(res);
@@ -1001,7 +1026,7 @@ class DloxVM {
     }
   }
 
-  InterpreterResult runtime_error(
+  DloxVMInterpreterResult runtime_error(
     final String format,
   ) {
     RuntimeError error = add_error(
@@ -1013,7 +1038,7 @@ class DloxVM {
       final frame = frames[i]!;
       final function = frame.closure.function;
       // frame.ip is sitting on the next instruction
-      final line = function.chunk.lines[frame.ip - 1];
+      final line = function.chunk.code[frame.ip - 1].value;
       final fun = () {
         if (function.name == null) {
           return '<script>';
@@ -1032,54 +1057,53 @@ class DloxVM {
   }
 }
 
-class InterpreterResult {
+class DloxVMInterpreterResult {
   final List<LangError> errors;
   final int last_line;
   final int step_count;
   final Object? return_value;
 
-  InterpreterResult(
-    final List<LangError> errors,
-    this.last_line,
-    this.step_count,
-    this.return_value,
-  ) : errors = List<LangError>.from(errors);
+  DloxVMInterpreterResult({
+    required final List<LangError> errors,
+    required this.last_line,
+    required this.step_count,
+    required this.return_value,
+  }) : errors = List<LangError>.from(errors);
 
   bool get done {
     return errors.isNotEmpty || return_value != null;
   }
 }
 
-class FunctionParams {
+class DLoxVMFunctionParams {
   final String? function;
   final List<Object>? args;
   final Map<String?, Object?>? globals;
 
-  const FunctionParams({
+  const DLoxVMFunctionParams({
     final this.function,
     final this.args,
     final this.globals,
   });
 }
 
-const int _FRAMES_MAX = 64;
-const int _STACK_MAX = _FRAMES_MAX * DLOX_UINT8_COUNT;
-const int _BATCH_COUNT = 1000000; // Must be fast enough
+const int _DLOXVM_FRAMES_MAX = 64;
+const int _DLOXVM_STACK_MAX = _DLOXVM_FRAMES_MAX * DLOX_UINT8_COUNT;
+const int _DLOXVM_BATCH_COUNT = 1000000; // Must be fast enough
 
-class _CallFrame {
+class _Dlox_VMCallFrame {
   late DloxClosure closure;
   late int ip;
-  late DloxChunk chunk; // Additionnal reference
+  late DloxChunk<int> chunk; // Additionnal reference
   late int slots_idx; // Index in stack of the frame slot
 
-  _CallFrame();
+  _Dlox_VMCallFrame();
 }
 
 bool _values_equal(
   final Object? a,
   final Object? b,
 ) {
-  // TODO: confirm behavior (especially for deep equality).
   // Equality relied on this function, but not hashmap indexing
   // It might trigger strange cases where two equal lists don't have the same hashcode
   if (a is List<dynamic> && b is List<dynamic>) {
@@ -1130,37 +1154,42 @@ bool _map_equals<T, U>(
     return true;
   }
 }
+// endregion
 
 // region native classes
-
-// TODO mixin, interface, move to model
 abstract class ObjNativeClass {
-  final String? name;
-  final Map<String?, Object?> properties;
-  final Map<String, Type>? properties_types;
-  final List<String> init_arg_keys;
+  String? get name;
 
-  ObjNativeClass({
-    required this.init_arg_keys,
-    this.name,
-    this.properties_types,
-    final List<Object?>? stack,
-    final int? arg_idx,
-    final int? arg_count,
-  }) : properties = {} {
-    if (arg_count != init_arg_keys.length) {
-      _arg_count_error(init_arg_keys.length, arg_count);
-    }
-    for (int k = 0; k < init_arg_keys.length; k++) {
-      final expected = properties_types![init_arg_keys[k]];
-      if (expected != Object && stack![arg_idx! + k].runtimeType != expected) {
-        _arg_type_error(0, expected, stack[arg_idx + k].runtimeType);
-      }
-      properties[init_arg_keys[k]] = stack![arg_idx! + k];
-    }
-  }
+  Map<String?, Object?> get properties;
 
-  Object call(
+  Map<String, Type>? get properties_types;
+
+  List<String> get init_arg_keys;
+
+  Object call_(
+    final String? key,
+    final List<Object?> stack,
+    final int arg_idx,
+    final int arg_count,
+  );
+
+  void set_val(
+    final String? key,
+    final Object? value,
+  );
+
+  Object get_val(
+    final String? key,
+  );
+
+  String string_expr({
+    final int max_chars,
+  });
+}
+
+mixin _ObjNativeClassMixin implements ObjNativeClass {
+  @override
+  Object call_(
     final String? key,
     final List<Object?> stack,
     final int arg_idx,
@@ -1169,6 +1198,7 @@ abstract class ObjNativeClass {
     throw _NativeError('Undefined function $key');
   }
 
+  @override
   void set_val(
     final String? key,
     final Object? value,
@@ -1184,6 +1214,7 @@ abstract class ObjNativeClass {
     }
   }
 
+  @override
   Object get_val(
     final String? key,
   ) {
@@ -1193,30 +1224,63 @@ abstract class ObjNativeClass {
       return properties[key] ?? DloxNil;
     }
   }
-
-  String string_expr({
-    final int max_chars,
-  });
 }
 
-class _ListNode extends ObjNativeClass {
+Map<String?, Object?> _make_properties({
+  required final int arg_count,
+  required final List<String> init_arg_keys,
+  required final Map<String, Type>? properties_types,
+  required final List<Object?>? stack,
+  required final int? arg_idx,
+}) {
+  final properties = <String, Object?>{};
+  if (arg_count != init_arg_keys.length) {
+    _arg_count_error(init_arg_keys.length, arg_count);
+  }
+  for (int k = 0; k < init_arg_keys.length; k++) {
+    final expected = properties_types![init_arg_keys[k]];
+    if (expected != Object && stack![arg_idx! + k].runtimeType != expected) {
+      _arg_type_error(0, expected, stack[arg_idx + k].runtimeType);
+    }
+    properties[init_arg_keys[k]] = stack![arg_idx! + k];
+  }
+  return properties;
+}
+
+class _ListNode with _ObjNativeClassMixin {
+  @override
+  final Map<String?, Object?> properties;
+  @override
+  final Map<String, Type>? properties_types;
+  @override
+  final List<String> init_arg_keys;
+
   _ListNode(
     final List<Object?> stack,
     final int arg_idx,
     final int arg_count,
-  ) : super(
-          name: 'ListNode',
+  )   : properties = _make_properties(
+          arg_count: arg_count,
+          init_arg_keys: [
+            'val',
+          ],
           properties_types: {
             'val': Object,
             'next': _ListNode,
           },
-          init_arg_keys: [
-            'val',
-          ],
           stack: stack,
           arg_idx: arg_idx,
-          arg_count: arg_count,
-        );
+        ),
+        properties_types = {
+          'val': Object,
+          'next': _ListNode,
+        },
+        init_arg_keys = [
+          'val',
+        ];
+
+  @override
+  String get name => 'ListNode';
 
   Object? get val {
     return properties['val'];
@@ -1296,18 +1360,17 @@ _ListNode _list_node(
   );
 }
 
-const Map<String, ObjNativeClass Function(List<Object>, int, int)> _NATIVE_CLASSES =
-    <String, NativeClassCreator>{
+const Map<String, NativeClassCreator> _NATIVE_CLASSES = <String, NativeClassCreator>{
   'ListNode': _list_node,
 };
 // endregion
 
-// region native
+// region support
 class _NativeError implements Exception {
-  final String format;
+  final String error;
 
   const _NativeError(
-    final this.format,
+    final this.error,
   );
 }
 
@@ -1389,8 +1452,29 @@ void _assert2doubles(
     <Type>[double, double],
   );
 }
+// endregion
 
-// Native functions
+// region native functions
+// region functions
+const _NATIVE_FUNCTIONS = <DloxNative>[
+  DloxNative('clock', 0, _clock_native),
+  DloxNative('min', 2, _min_native),
+  DloxNative('max', 2, _max_native),
+  DloxNative('floor', 1, _floor_native),
+  DloxNative('ceil', 1, _ceil_native),
+  DloxNative('abs', 1, _abs_native),
+  DloxNative('round', 1, _round_native),
+  DloxNative('sqrt', 1, _sqrt_native),
+  DloxNative('sign', 1, _sign_native),
+  DloxNative('exp', 1, _exp_native),
+  DloxNative('log', 1, _log_native),
+  DloxNative('sin', 1, _sin_native),
+  DloxNative('asin', 1, _asin_native),
+  DloxNative('cos', 1, _cos_native),
+  DloxNative('acos', 1, _acos_native),
+  DloxNative('tan', 1, _tan_native),
+  DloxNative('atan', 1, _atan_native),
+];
 
 double _clock_native(
   final List<Object?> stack,
@@ -1540,35 +1624,26 @@ double _atan_native(
 ) {
   return atan(_assert1double(stack, arg_idx, arg_count));
 }
+// endregion
 
-// ignore: non_constant_identifier_names
-final _NATIVE_FUNCTIONS = <DloxNative>[
-  DloxNative('clock', 0, _clock_native),
-  DloxNative('min', 2, _min_native),
-  DloxNative('max', 2, _max_native),
-  DloxNative('floor', 1, _floor_native),
-  DloxNative('ceil', 1, _ceil_native),
-  DloxNative('abs', 1, _abs_native),
-  DloxNative('round', 1, _round_native),
-  DloxNative('sqrt', 1, _sqrt_native),
-  DloxNative('sign', 1, _sign_native),
-  DloxNative('exp', 1, _exp_native),
-  DloxNative('log', 1, _log_native),
-  DloxNative('sin', 1, _sin_native),
-  DloxNative('asin', 1, _asin_native),
-  DloxNative('cos', 1, _cos_native),
-  DloxNative('acos', 1, _acos_native),
-  DloxNative('tan', 1, _tan_native),
-  DloxNative('atan', 1, _atan_native),
-];
-
+// region native values
 const _NATIVE_VALUES = <String, Object>{
   'π': pi,
   '𝘦': e,
   '∞': double.infinity,
 };
+// endregion
 
-// List native functions
+// region native list functions
+const _LIST_NATIVE_FUNCTIONS = <String, _ListNativeFunction>{
+  'length': _list_length,
+  'add': _list_add,
+  'insert': _list_insert,
+  'remove': _list_remove,
+  'pop': _list_pop,
+  'clear': _list_clear,
+};
+
 double _list_length(
   final List<dynamic> list,
   final List<Object?> stack,
@@ -1635,7 +1710,12 @@ Object? _list_pop(
   return list.removeLast();
 }
 
-void _list_clear(final List<dynamic> list, final List<Object?> stack, final int arg_idx, final int arg_count,) {
+void _list_clear(
+  final List<dynamic> list,
+  final List<Object?> stack,
+  final int arg_idx,
+  final int arg_count,
+) {
   if (arg_count != 0) {
     _arg_count_error(0, arg_count);
   }
@@ -1648,17 +1728,16 @@ typedef _ListNativeFunction = Object? Function(
   int arg_idx,
   int arg_count,
 );
+// endregion
 
-const _LIST_NATIVE_FUNCTIONS = <String, _ListNativeFunction>{
-  'length': _list_length,
-  'add': _list_add,
-  'insert': _list_insert,
-  'remove': _list_remove,
-  'pop': _list_pop,
-  'clear': _list_clear,
+// region map
+const _MAP_NATIVE_FUNCTIONS = <String, _MapNativeFunction>{
+  'length': _map_length,
+  'keys': _map_keys,
+  'values': _map_values,
+  'has': _map_has,
 };
 
-// Map native functions
 double _map_length(
   final Map<dynamic, dynamic> map,
   final List<Object?> stack,
@@ -1713,15 +1792,13 @@ typedef _MapNativeFunction = Object Function(
   int arg_idx,
   int arg_count,
 );
+// endregion
 
-const _MAP_NATIVE_FUNCTIONS = <String, _MapNativeFunction>{
-  'length': _map_length,
-  'keys': _map_keys,
-  'values': _map_values,
-  'has': _map_has,
+// region string functions
+const _STRING_NATIVE_FUNCTIONS = <String, _StringNativeFunction>{
+  'length': _str_length,
 };
 
-// String native functions
 double _str_length(
   final String str,
   final List<Object?> stack,
@@ -1740,8 +1817,5 @@ typedef _StringNativeFunction = Object Function(
   int arg_idx,
   int arg_count,
 );
-
-const _STRING_NATIVE_FUNCTIONS = <String, _StringNativeFunction>{
-  'length': _str_length,
-};
+// endregion
 // endregion

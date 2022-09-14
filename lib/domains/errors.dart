@@ -1,54 +1,24 @@
-// TODO remove
 import 'package:sprintf/sprintf.dart' show sprintf;
 
 import '../arrows/fundamental/objfunction_to_output.dart';
 import 'objfunction.dart';
 import 'tokens.dart';
 
-// TODO have two classes of errors: runtime and compiler and make them independent from each other.
-// TODO  retuse tostring by calling a function not via inheritance.
-mixin LangError {
-  String get type;
+abstract class LangError {
+  int get line;
 
-  Token? get token;
+  String get msg;
 
-  int? get line;
-
-  String? get msg;
-
-  void dump(
-    final Debug debug,
-  ) {
-    debug.stdwriteln(toString());
-  }
-
-  @override
-  String toString() {
-    final buf = StringBuffer();
-    if (token != null) {
-      buf.write('[${token!.loc.line + 1}] $type error');
-      if (token!.type == TokenType.EOF) {
-        buf.write(' at end');
-      } else if (token!.type == TokenType.ERROR) {
-        // Nothing.
-      } else {
-        buf.write(' at \'${token!.lexeme}\'');
-      }
-    } else if (line != null) {
-      buf.write('[$line] $type error');
-    } else {
-      buf.write('$type error');
-    }
-    buf.write(': $msg');
-    return buf.toString();
-  }
+  R match<R>({
+    required final R Function(CompilerError) compiler,
+    required final R Function(RuntimeError) runtime,
+  });
 }
 
-class CompilerError with LangError {
-  @override
+class CompilerError implements LangError {
   final Token token;
   @override
-  final String? msg;
+  final String msg;
 
   const CompilerError({
     required final this.token,
@@ -56,42 +26,118 @@ class CompilerError with LangError {
   });
 
   @override
-  String get type => "Compile";
+  int get line => token.loc.line;
 
   @override
-  int? get line => token.loc.line;
+  R match<R>({
+    required final R Function(CompilerError) compiler,
+    required final R Function(RuntimeError) runtime,
+  }) =>
+      compiler(this);
 }
 
-class RuntimeError with LangError {
+class RuntimeError implements LangError {
   final RuntimeError? link;
   @override
   final int line;
   @override
-  final String? msg;
+  final String msg;
 
   const RuntimeError({
     required final this.line,
     required final this.msg,
-    final this.link,
+    required final this.link,
   });
 
   @override
-  String get type => "Runtime";
-
-  @override
-  Null get token => null;
+  R match<R>({
+    required final R Function(CompilerError) compiler,
+    required final R Function(RuntimeError) runtime,
+  }) =>
+      runtime(this);
 }
 
+// region debug
 class Debug {
   final bool silent;
   final StringBuffer buf;
   final List<CompilerError> errors;
+  bool panic_mode;
 
-  // TODO make silent named once editor is migrated to nnbd
-  Debug(
-    final this.silent,
-  )   : buf = StringBuffer(),
-        errors = [];
+  Debug({
+    required final this.silent,
+  })  : buf = StringBuffer(),
+        errors = [],
+        panic_mode = false;
+
+  // region infrastructure
+  void restore() {
+    panic_mode = false;
+  }
+
+  void write_error(
+    final LangError err,
+  ) {
+    String describe_error(
+      final Token? token,
+      final String type,
+      final String? msg,
+      final int line,
+    ) {
+      final buf = StringBuffer();
+      if (token != null) {
+        buf.write('[${token.loc.line + 1}] ${type} error');
+        if (token.type == TokenType.EOF) {
+          buf.write(' at end');
+        } else if (token.type == TokenType.ERROR) {
+          // Nothing.
+        } else {
+          buf.write(' at \'${token.lexeme}\'');
+        }
+      } else {
+        buf.write('[${line}] ${type} error');
+      }
+      buf.write(': ${msg}');
+      return buf.toString();
+    }
+
+    err.match(
+      compiler: (final a) => stdwriteln(
+        describe_error(
+          a.token,
+          "Compile",
+          a.msg,
+          a.line,
+        ),
+      ),
+      runtime: (final a) => stdwriteln(describe_error(
+        null,
+        "Runtime",
+        a.msg,
+        a.line,
+      ),
+      ),
+    );
+  }
+
+  void error_at(
+    final Token token,
+    final String message,
+  ) {
+    if (panic_mode) {
+      // Ignore
+    } else {
+      panic_mode = true;
+      final error = CompilerError(
+        token: token,
+        msg: message,
+      );
+      write_error(error);
+      errors.add(
+        error,
+      );
+    }
+  }
 
   String clear() {
     final str = buf.toString();
@@ -115,10 +161,10 @@ class Debug {
     }
   }
 
-  void stdwriteln([
-    final String? string,
-  ]) {
-    return stdwrite((string ?? '') + '\n');
+  void stdwriteln(
+    final String string,
+  ) {
+    return stdwrite(string + '\n');
   }
 
   void print_value(
@@ -127,33 +173,40 @@ class Debug {
     stdwrite(value_to_string(value));
   }
 
+  // endregion
+
+  // region disassembler
   void disassemble_chunk(
-    final DloxChunk chunk,
+    final DloxChunk<int> chunk,
     final String name,
   ) {
     stdwrite("==" + name + "==\n");
     int? prev_line = -1;
     for (int offset = 0; offset < chunk.code.length;) {
       offset = disassemble_instruction(prev_line, chunk, offset);
-      prev_line = offset > 0 ? chunk.lines[offset - 1] : null;
+      if (offset > 0) {
+        prev_line = chunk.code[offset - 1].value;
+      } else {
+        prev_line = null;
+      }
     }
   }
 
   int constant_instruction(
     final String name,
-    final DloxChunk chunk,
+    final DloxChunk<int> chunk,
     final int offset,
   ) {
-    final constant = chunk.code[offset + 1];
+    final constant = chunk.code[offset + 1].key;
     stdwrite(sprintf('%-16s %4d \'', [name, constant]));
-    print_value(chunk.constants[constant]);
+    print_value(chunk.heap.constant_at(constant));
     stdwrite('\'\n');
     return offset + 2;
   }
 
   int initializer_list_instruction(
     final String name,
-    final DloxChunk chunk,
+    final DloxChunk<int> chunk,
     final int offset,
   ) {
     final nArgs = chunk.code[offset + 1];
@@ -163,13 +216,13 @@ class Debug {
 
   int invoke_instruction(
     final String name,
-    final DloxChunk chunk,
+    final DloxChunk<int> chunk,
     final int offset,
   ) {
-    final constant = chunk.code[offset + 1];
+    final constant = chunk.code[offset + 1].key;
     final arg_count = chunk.code[offset + 2];
     stdwrite(sprintf('%-16s (%d args) %4d \'', [name, arg_count, constant]));
-    print_value(chunk.constants[constant]);
+    print_value(chunk.heap.constant_at(constant));
     stdwrite('\'\n');
     return offset + 3;
   }
@@ -184,7 +237,7 @@ class Debug {
 
   int byte_instruction(
     final String name,
-    final DloxChunk chunk,
+    final DloxChunk<int> chunk,
     final int offset,
   ) {
     final slot = chunk.code[offset + 1];
@@ -195,22 +248,21 @@ class Debug {
   int jump_instruction(
     final String name,
     final int sign,
-    final DloxChunk chunk,
+    final DloxChunk<int> chunk,
     final int offset,
   ) {
-    int jump = chunk.code[offset + 1] << 8;
-    jump |= chunk.code[offset + 2];
+    final jump = (chunk.code[offset + 1].key << 8) | chunk.code[offset + 2].key;
     stdwrite(sprintf('%-16s %4d -> %d\n', [name, offset, offset + 3 + sign * jump]));
     return offset + 3;
   }
 
   int disassemble_instruction(
     final int? prevLine,
-    final DloxChunk chunk,
+    final DloxChunk<int> chunk,
     int offset,
   ) {
     stdwrite(sprintf('%04d ', [offset]));
-    final i = chunk.lines[offset];
+    final i = chunk.code[offset].value;
     // stdwrite("${chunk.trace[offset].token.info} "); // temp
     // final prevLoc = offset > 0 ? chunk.trace[offset - 1].token.loc : null;
     if (offset > 0 && i == prevLine) {
@@ -218,7 +270,7 @@ class Debug {
     } else {
       stdwrite(sprintf('%4d ', [i]));
     }
-    final instruction = chunk.code[offset];
+    final instruction = chunk.code[offset].key;
     switch (DloxOpCode.values[instruction]) {
       case DloxOpCode.CONSTANT:
         return constant_instruction('OP_CONSTANT', chunk, offset);
@@ -288,14 +340,14 @@ class Debug {
         // ignore: parameter_assignments
         offset++;
         // ignore: parameter_assignments
-        final constant = chunk.code[offset++];
+        final constant = chunk.code[offset++].key;
         stdwrite(sprintf('%-16s %4d ', ['OP_CLOSURE', constant]));
-        print_value(chunk.constants[constant]);
+        print_value(chunk.heap.constant_at(constant));
         stdwrite('\n');
-        final function = (chunk.constants[constant] as DloxFunction?)!;
-        for (var j = 0; j < function.upvalue_count; j++) {
+        final function = (chunk.heap.constant_at(constant) as DloxFunction?)!;
+        for (int j = 0; j < function.upvalue_count; j++) {
           // ignore: parameter_assignments
-          final isLocal = chunk.code[offset++] == 1;
+          final is_local = chunk.code[offset++].key == 1;
           // ignore: parameter_assignments
           final index = chunk.code[offset++];
           stdwrite(
@@ -304,7 +356,7 @@ class Debug {
               [
                 offset - 2,
                 () {
-                  if (isLocal) {
+                  if (is_local) {
                     return 'local';
                   } else {
                     return 'upvalue';
@@ -344,6 +396,7 @@ class Debug {
         throw Exception('Unknown opcode $instruction');
     }
   }
+// endregion
 }
 
 String? value_to_string(
@@ -352,7 +405,11 @@ String? value_to_string(
   final bool quoteEmpty = true,
 }) {
   if (value is bool) {
-    return value ? 'true' : 'false';
+    if (value) {
+      return 'true';
+    } else {
+      return 'false';
+    }
   } else if (value == DloxNil) {
     return 'nil';
   } else if (value is double) {
@@ -371,7 +428,7 @@ String? value_to_string(
   } else if (value is List) {
     return list_to_string(value, maxChars: max_chars);
   } else if (value is Map) {
-    return map_to_string(value, maxChars: max_chars);
+    return map_to_string(value, max_chars: max_chars);
   } else {
     return object_to_string(value, maxChars: max_chars);
   }
@@ -382,7 +439,7 @@ String list_to_string(
   final int maxChars = 100,
 }) {
   final buf = StringBuffer('[');
-  for (var k = 0; k < list.length; k++) {
+  for (int k = 0; k < list.length; k++) {
     if (k > 0) buf.write(',');
     buf.write(value_to_string(list[k], max_chars: maxChars - buf.length));
     if (buf.length > maxChars) {
@@ -396,19 +453,19 @@ String list_to_string(
 
 String map_to_string(
   final Map<dynamic, dynamic> map, {
-  final int maxChars = 100,
+  final int max_chars = 100,
 }) {
   final buf = StringBuffer('{');
   final entries = map.entries.toList();
-  for (var k = 0; k < entries.length; k++) {
+  for (int k = 0; k < entries.length; k++) {
     if (k > 0) buf.write(',');
-    buf.write(value_to_string(entries[k].key, max_chars: maxChars - buf.length));
+    buf.write(value_to_string(entries[k].key, max_chars: max_chars - buf.length));
     buf.write(':');
     buf.write(value_to_string(
       entries[k].value,
-      max_chars: maxChars - buf.length,
+      max_chars: max_chars - buf.length,
     ));
-    if (buf.length > maxChars) {
+    if (buf.length > max_chars) {
       buf.write('...');
       break;
     }
@@ -453,3 +510,4 @@ String function_to_string(
     return '<fn ' + function.name.toString() + '>';
   }
 }
+// endregion

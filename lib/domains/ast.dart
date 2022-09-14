@@ -1,6 +1,6 @@
-// region compilation unit
 import 'tokens.dart';
 
+// region compilation unit
 class CompilationUnit {
   final List<Declaration> decls;
 
@@ -124,14 +124,6 @@ class Functiony {
   const Functiony({
     required final this.name,
     required final this.args,
-    required final this.decls,
-  });
-}
-
-class Block {
-  final List<Declaration> decls;
-
-  const Block({
     required final this.decls,
   });
 }
@@ -478,25 +470,6 @@ class ExprGetSet2 implements Expr {
   });
 }
 
-class Getset {
-  final Expr child;
-  final GetsetType type;
-
-  const Getset({
-    required final this.child,
-    required final this.type,
-  });
-}
-
-enum GetsetType {
-  pluseq,
-  minuseq,
-  stareq,
-  slasheq,
-  poweq,
-  modeq,
-}
-
 class ExprList implements Expr {
   final List<Expr> values;
   final int val_count;
@@ -789,6 +762,25 @@ class ExprEq implements Expr {
     required final this.child,
     required final this.line,
   });
+}
+
+class Getset {
+  final Expr child;
+  final GetsetType type;
+
+  const Getset({
+    required final this.child,
+    required final this.type,
+  });
+}
+
+enum GetsetType {
+  pluseq,
+  minuseq,
+  stareq,
+  slasheq,
+  poweq,
+  modeq,
 }
 
 Z match_expr<Z>({

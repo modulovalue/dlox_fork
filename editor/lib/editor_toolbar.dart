@@ -1,86 +1,101 @@
 import 'dart:convert';
 
-import 'package:editor/constants.dart';
-import 'package:editor/runtime_toolbar.dart';
-import 'package:editor/widgets/toggle_button.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_icons/flutter_icons.dart';
+import 'package:flutter_font_icons/flutter_font_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+import 'constants.dart';
+import 'runtime_toolbar.dart';
+import 'widgets/toggle_button.dart';
 
 class EditorToolbar extends StatefulWidget {
   final Layout layout;
-  final Function(String) onSnippet;
+  final void Function(String) onSnippet;
 
-  const EditorToolbar({Key key, this.layout, this.onSnippet}) : super(key: key);
+  const EditorToolbar({
+    required final this.layout,
+    required final this.onSnippet,
+    final Key? key,
+  }) : super(
+          key: key,
+        );
 
   @override
   _EditorToolbarState createState() => _EditorToolbarState();
 }
 
 class _EditorToolbarState extends State<EditorToolbar> {
-  String snippetFname; // Default file
-  List<String> snippetList;
-  final pathMap = <String, String>{};
+  String? snippet_fname;
+  late List<String> snippet_list;
+  final Map<String, String> path_map = {};
 
   @override
   void initState() {
     super.initState();
-    loadManifest();
+    load_manifest();
   }
 
-  Future loadManifest() async {
+  Future<void> load_manifest() async {
     final manifestContent = await rootBundle.loadString('AssetManifest.json');
-    final manifestMap = json.decode(manifestContent);
-    snippetList = manifestMap.keys
-        .where((String key) => key.contains('snippets/'))
+    final manifestMap = json.decode(manifestContent) as Map<String, dynamic>;
+    snippet_list = manifestMap.keys
+        .where(
+          (final String key) => key.contains('snippets/'),
+        )
         .toList();
-    pathMap.clear();
-    snippetList.forEach((el) {
-      pathMap[fname(el)] = el;
+    path_map.clear();
+    snippet_list.forEach((final el) {
+      path_map[fname(el)] = el;
     });
     // Set first snippet
-    await setSnippet("fibonacci");  // Default file
+    await set_snippet("fibonacci"); // Default file
   }
 
-  Future setSnippet(String fname) async {
-    setState(() => snippetFname = fname);
-    final source = await rootBundle.loadString(pathMap[snippetFname]);
+  Future<void> set_snippet(
+    final String fname,
+  ) async {
+    setState(() => snippet_fname = fname);
+    final source = await rootBundle.loadString(path_map[snippet_fname]!);
     widget.onSnippet(source);
   }
 
-  String fname(String path) {
+  String fname(
+    final String path,
+  ) {
     final split = path.split("/");
     return split.last.replaceAll("_", " ").replaceAll(".lox", "");
   }
 
-  Widget buildDropdown() {
+  Widget build_dropdown() {
     final dropdown = DropdownButton<String>(
-      value: snippetFname,
-      items: pathMap.keys.map((String value) {
-        return new DropdownMenuItem<String>(
+      value: snippet_fname,
+      items: path_map.keys.map((final String value) {
+        return DropdownMenuItem<String>(
           value: value,
           child: Text(
             value,
-            style: TextStyle(
+            style: const TextStyle(
               color: Colors.white,
               fontSize: 16.0,
             ),
           ),
         );
-      }).toList(),
-      onChanged: setSnippet,
+      },).toList(),
+      onChanged: (final a) => set_snippet(a!),
       iconEnabledColor: Colors.white,
       dropdownColor: Colors.black87,
-      underline: SizedBox.shrink(),
+      underline: const SizedBox.shrink(),
     );
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 8.0),
+      padding: const EdgeInsets.symmetric(horizontal: 8.0),
       child: dropdown,
     );
   }
 
-  Future _launchInBrowser(String url) async {
+  Future<void> _launch_in_browser(
+    final String url,
+  ) async {
     if (await canLaunch(url)) {
       await launch(
         url,
@@ -89,21 +104,20 @@ class _EditorToolbarState extends State<EditorToolbar> {
         headers: <String, String>{'my_header_key': 'my_header_value'},
       );
     } else {
-      throw 'Could not launch $url';
+      throw Exception('Could not launch $url');
     }
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(
+    final BuildContext context,
+  ) {
     final github = IconButton(
-      padding: EdgeInsets.only(left: 8.0),
-      icon: Icon(FontAwesome5Brands.github, color: Colors.white),
-      onPressed: () =>
-          _launchInBrowser("https://github.com/BertrandBev/dlox"),
+      padding: const EdgeInsets.only(left: 8.0),
+      icon: const Icon(FontAwesome5Brands.github, color: Colors.white),
+      onPressed: () => _launch_in_browser("https://github.com/BertrandBev/dlox"),
     );
-
-    final snippets = buildDropdown();
-
+    final snippets = build_dropdown();
     final toggleBtn = ToggleButton(
       leftIcon: MaterialCommunityIcons.code_tags,
       leftEnabled: widget.layout.showEditor,
@@ -112,12 +126,11 @@ class _EditorToolbarState extends State<EditorToolbar> {
       rightEnabled: widget.layout.showCompiler,
       rightToggle: widget.layout.toggleCompiler,
     );
-
     final row = Row(
       children: [
         github,
         snippets,
-        Spacer(),
+        const Spacer(),
         toggleBtn,
       ],
     );

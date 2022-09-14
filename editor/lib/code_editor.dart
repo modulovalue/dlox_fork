@@ -1,30 +1,34 @@
-import 'package:editor/lox_mode.dart';
-import 'package:editor/runtime.dart';
+import 'package:code_text_field/code_text_field.dart';
 import 'package:dlox/arrows/fundamental/objfunction_to_output.dart';
 import 'package:dlox/domains/errors.dart';
 import 'package:dlox/domains/objfunction.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_highlight/themes/monokai-sublime.dart';
-import 'package:code_text_field/code_text_field.dart';
-import 'package:flutter_highlight/themes/monokai-sublime.dart'
-    show monokaiSublimeTheme;
+import 'package:flutter_highlight/themes/monokai-sublime.dart' show monokaiSublimeTheme;
 
 import 'constants.dart';
+import 'lox_mode.dart';
+import 'runtime.dart';
 
 class CodeEditor extends StatefulWidget {
   final Runtime runtime;
 
-  CodeEditor({Key key, this.runtime}) : super(key: key);
+  const CodeEditor({
+    required final this.runtime,
+    final Key? key,
+  }) : super(
+          key: key,
+        );
 
   @override
   CodeEditorState createState() => CodeEditorState();
 }
 
 class CodeEditorState extends State<CodeEditor> {
-  CodeController _codeController;
-  InterpreterResult interpreterResult;
-  DloxFunction compilerResult_function;
+  late CodeController _codeController;
+  DloxVMInterpreterResult? interpreterResult;
+  DloxFunction? compilerResult_function;
   final errorMap = <int, List<LangError>>{};
 
   @override
@@ -46,7 +50,9 @@ class CodeEditorState extends State<CodeEditor> {
     super.dispose();
   }
 
-  void setSource(String source) {
+  void setSource(
+    final String source,
+  ) {
     _codeController.text = source;
   }
 
@@ -54,23 +60,31 @@ class CodeEditorState extends State<CodeEditor> {
     widget.runtime.set_source(_codeController.rawText);
   }
 
-  void _setErrors(List<LangError> errors) {
-    if (errors == null) return;
+  void _setErrors(
+    final List<LangError>? errors,
+  ) {
+    if (errors == null) {
+      return;
+    }
     errorMap.clear();
-    errors.forEach((err) {
+    errors.forEach((final err) {
       final line = err.line + 1;
-      if (!errorMap.containsKey(line)) errorMap[line] = <LangError>[];
-      errorMap[line].add(err);
+      errorMap.putIfAbsent(line, () => <LangError>[]).add(err);
     });
     setState(() {});
   }
 
-  void setCompilerResult(DloxFunction result, List<LangError> errors,) {
+  void setCompilerResult(
+    final DloxFunction? result,
+    final List<LangError> errors,
+  ) {
     this.compilerResult_function = result;
     _setErrors(errors);
   }
 
-  void setInterpreterResult(InterpreterResult result) {
+  void setInterpreterResult(
+    final DloxVMInterpreterResult? result,
+  ) {
     this.interpreterResult = result;
     _setErrors(result?.errors);
   }
@@ -79,15 +93,19 @@ class CodeEditorState extends State<CodeEditor> {
     return _codeController.text;
   }
 
-  TextSpan _lineNumberBuilder(int line, TextStyle style) {
+  TextSpan _lineNumberBuilder(
+    final int line,
+    final TextStyle style,
+  ) {
     // if (line == 2) return TextSpan(text: "@", style: style);
-    if (errorMap.containsKey(line))
+    if (errorMap.containsKey(line)) {
       return TextSpan(
         text: "❌",
         style: style.copyWith(color: Colors.red),
         recognizer: TapGestureRecognizer()..onTap = () => print('OnTap'),
       );
-    if (interpreterResult?.last_line == line - 1)
+    }
+    if (interpreterResult?.last_line == line - 1) {
       return TextSpan(
         text: ">",
         style: style.copyWith(
@@ -95,16 +113,19 @@ class CodeEditorState extends State<CodeEditor> {
           fontWeight: FontWeight.bold,
         ),
       );
+    }
     return TextSpan(text: "$line", style: style);
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(
+    final BuildContext context,
+  ) {
     return CodeField(
       controller: _codeController,
-      textStyle: TextStyle(fontFamily: 'SourceCode'),
+      textStyle: const TextStyle(fontFamily: 'SourceCode'),
       expands: true,
-      lineNumberBuilder: _lineNumberBuilder,
+      lineNumberBuilder: (final a, final b) => _lineNumberBuilder(a, b!),
     );
   }
 }

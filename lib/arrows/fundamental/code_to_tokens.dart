@@ -142,15 +142,11 @@ class _Lexer {
     switch (char_at(start)) {
       case 'a':
         return check_keyword(1, 'nd', TokenType.AND);
-      case 'b':
-        return check_keyword(1, 'reak', TokenType.BREAK);
       case 'c':
         if (current - start > 1) {
           switch (char_at(start + 1)) {
             case 'l':
               return check_keyword(2, 'ass', TokenType.CLASS);
-            case 'o':
-              return check_keyword(2, 'ntinue', TokenType.CONTINUE);
           }
         }
         break;

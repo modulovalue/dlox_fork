@@ -1,24 +1,26 @@
 import 'package:flutter/material.dart';
 
 class ToggleButton extends StatelessWidget {
-  final Function leftToggle;
-  final Function rightToggle;
+  final void Function() leftToggle;
+  final void Function() rightToggle;
   final bool leftEnabled;
   final bool rightEnabled;
   final IconData leftIcon;
   final IconData rightIcon;
 
   const ToggleButton({
-    Key key,
-    this.leftToggle,
-    this.rightToggle,
-    this.leftEnabled,
-    this.rightEnabled,
-    this.leftIcon,
-    this.rightIcon,
+    required final this.leftToggle,
+    required final this.rightToggle,
+    required final this.leftEnabled,
+    required final this.rightEnabled,
+    required final this.leftIcon,
+    required final this.rightIcon,
+    final Key? key,
   }) : super(key: key);
 
-  Widget _buildBtn(bool left) {
+  Widget _buildBtn(
+    final bool left,
+  ) {
     final enabled = left ? leftEnabled : rightEnabled;
     final action = left ? leftToggle : rightToggle;
     final icon = left ? leftIcon : rightIcon;
@@ -26,9 +28,9 @@ class ToggleButton extends StatelessWidget {
     final iconColor = enabled ? Colors.white : Colors.grey;
     return RawMaterialButton(
       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      padding: EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
+      padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
       onPressed: action,
-      constraints: BoxConstraints(minWidth: 0, minHeight: 0),
+      constraints: const BoxConstraints(minWidth: 0, minHeight: 0),
       child: Icon(icon, color: iconColor),
       fillColor: color,
       shape: RoundedRectangleBorder(
@@ -44,7 +46,9 @@ class ToggleButton extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(
+    final BuildContext context,
+  ) {
     return Padding(
       padding: const EdgeInsets.all(8.0),
       child: Row(children: [

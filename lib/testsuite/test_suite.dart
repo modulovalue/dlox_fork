@@ -2,27 +2,39 @@ import 'dart:io';
 
 import 'package:path/path.dart';
 
-// TODO remove this
-import '../arrows/code_to_objfunction.dart';
-// TODO remove this
-import '../arrows/fundamental/objfunction_to_output.dart';
-// TODO remove this
-import '../domains/errors.dart';
-// TODO remove this
-import '../domains/tokens.dart';
+import '../arrows/fundamental/ast_to_objfunction.dart';
 
-// TODO have fixtures for the lexer in the style of esprima?
-// TODO have a benchmark suite that exposes just files.
-// TODO move into the one level up test directory once there are no dependencies here anymore.
+// TODO remove this.
+import '../arrows/fundamental/objfunction_to_output.dart' show DloxVM;
+
+// TODO remove this.
+import '../arrows/fundamental/tokens_to_ast.dart';
+
+// TODO remove this.
+import '../domains/errors.dart' show Debug;
+
+// TODO remove this.
+import '../domains/tokens.dart' show Token;
+
+// TODO have fixtures for the lexer in the style of esprima.
+// TODO have a benchmark suite.
 abstract class DLoxTestSuite {
   static void run<R>({
     required final DLoxTestSuiteDependencies deps,
     required final DLoxTestSuiteWrapper<R> wrapper,
   }) {
+    final runtime_error_regexp = RegExp(r'// Runtime error:(.+)');
+    final error_at_regexp = RegExp(r'// Error at (.+):(.+)');
+    final during_execution_regexp = RegExp('during(.+)execution');
+    final expect_regexp = RegExp(r'// expect: (.+)');
     final vm = DloxVM(
       silent: true,
     );
-    final dir_list = dir_contents(Directory(deps.dlox_lib_path.resolve("testsuite").path));
+    final dir_list = dir_contents(
+      Directory(
+        deps.dlox_lib_path.resolve("testsuite").path,
+      ),
+    );
     for (int k = 0; k < dir_list.length; k++) {
       final dir = dir_list[k];
       wrapper.run_group(
@@ -46,24 +58,36 @@ abstract class DLoxTestSuite {
                   }
                   // Compile test
                   final debug = Debug(
-                    true,
+                    silent: true,
                   );
-                  final compiler_result = source_to_dlox(
-                    source: source,
+                  final tokens = deps.lexer(source);
+                  final parser = tokens_to_ast(
+                    tokens: tokens,
+                    debug: debug,
+                  );
+                  final compiler_result = ast_to_objfunction(
+                    compilation_unit: parser.key,
+                    last_line: parser.value,
                     debug: debug,
                     trace_bytecode: false,
                   );
                   // Compiler error
-                  final err_matches1 = RegExp(r'// Error at (.+):(.+)').allMatches(source);
-                  final err_ref1 = err_matches1.map((final e) {
-                    final line = line_number[e.start];
-                    String msg = e.group(2)!.trim();
-                    if (msg.endsWith('.')) {
-                      msg = msg.substring(0, msg.length - 1);
-                    }
-                    return line.toString() + ':' + msg;
-                  }).toSet();
-                  final err_list1 = debug.errors.map((final e) => '${e.token.loc.line}:${e.msg}').toSet();
+                  final err_matches1 = error_at_regexp.allMatches(source);
+                  final err_ref1 = err_matches1.map(
+                    (final e) {
+                      final line = line_number[e.start];
+                      String msg = e.group(2)!.trim();
+                      if (msg.endsWith('.')) {
+                        msg = msg.substring(0, msg.length - 1);
+                      }
+                      return line.toString() + ':' + msg;
+                    },
+                  ).toSet();
+                  final err_list1 = debug.errors
+                      .map(
+                        (final e) => '${e.token.loc.line}:${e.msg}',
+                      )
+                      .toSet();
                   wrapper.run_test("test", (final test_context) {
                     if (set_eq(err_ref1, err_list1)) {
                       if (err_list1.isEmpty) {
@@ -72,11 +96,10 @@ abstract class DLoxTestSuite {
                         vm.set_function(
                           compiler_result,
                           debug.errors,
-                          const FunctionParams(),
                         );
                         final interpreter_result = vm.run();
                         // Interpreter errors
-                        final err_matches2 = RegExp(r'// Runtime error:(.+)').allMatches(source);
+                        final err_matches2 = runtime_error_regexp.allMatches(source);
                         final err_ref2 = err_matches2.map((final e) {
                           final line = line_number[e.start];
                           final msg = e.group(1)!.trim();
@@ -89,12 +112,11 @@ abstract class DLoxTestSuite {
                         final err_list2 = interpreter_result.errors
                             .map((final e) => '${e.line}:${e.msg}')
                             // filter out stack traces
-                            .where((final el) => !el.contains(RegExp('during(.+)execution')))
+                            .where((final el) => !el.contains(during_execution_regexp))
                             .toSet();
                         if (set_eq(err_ref2, err_list2)) {
                           // Extract test reqs
-                          final rtn_exp = RegExp(r'// expect: (.+)');
-                          final rtn_matches = rtn_exp.allMatches(source);
+                          final rtn_matches = expect_regexp.allMatches(source);
                           final stdout_ref = rtn_matches.map((final e) => e.group(1)).toList();
                           final stdout = vm.stdout.buf
                               .toString()
@@ -165,9 +187,13 @@ abstract class DLoxTestSuite {
     final List<dynamic> l1,
     final List<dynamic> l2,
   ) {
-    if (l1.length != l2.length) return false;
+    if (l1.length != l2.length) {
+      return false;
+    }
     for (int k = 0; k < l1.length; k++) {
-      if (l1[k] != l2[k]) return false;
+      if (l1[k] != l2[k]) {
+        return false;
+      }
     }
     return true;
   }
