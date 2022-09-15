@@ -9,7 +9,7 @@ DloxFunction source_to_dlox({
   required final Debug debug,
   required final bool trace_bytecode,
 }) {
-  final tokens = run_lexer(
+  final tokens = source_to_tokens(
     source: source,
   );
   final parser = tokens_to_ast(

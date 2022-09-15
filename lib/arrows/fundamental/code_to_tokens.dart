@@ -1,6 +1,6 @@
 import '../../domains/tokens.dart';
 
-List<Token> run_lexer({
+List<Token> source_to_tokens({
   required final String source,
 }) {
   final lexer = _Lexer._(
@@ -12,7 +12,7 @@ List<Token> run_lexer({
     if (tokens.last.type == TokenType.EOF) {
       return tokens;
     } else {
-      // Continue.
+      continue;
     }
   }
 }

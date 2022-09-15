@@ -1,3 +1,0 @@
-fun foo() {}
-
-foo.bar; // Runtime error: Only instances have properties.

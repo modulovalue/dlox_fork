@@ -1,2 +1,0 @@
-undefined1.bar // Runtime error: Undefined variable 'undefined1'.
-  = undefined2;

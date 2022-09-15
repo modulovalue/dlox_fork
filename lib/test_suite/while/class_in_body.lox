@@ -1,2 +1,0 @@
-while (true) class Foo {} // Error at 'class': Expect expression.
-

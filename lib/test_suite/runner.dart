@@ -1,15 +1,12 @@
-import 'dart:io';
-
-import 'package:path/path.dart';
-
 import '../arrows/fundamental/ast_to_objfunction.dart' show ast_to_objfunction;
 import '../arrows/fundamental/objfunction_to_output.dart' show DloxVM;
 import '../domains/ast.dart' show CompilationUnit;
 import '../domains/errors.dart' show Debug;
 import '../domains/tokens.dart' show Token;
+import 'dataset.dart' show DloxDatasetAll;
+import 'model.dart' show DloxDatasetInternal, DloxDatasetLeafImpl;
 
 // TODO have fixtures for the lexer in the style of esprima.
-// TODO use files from dart.
 abstract class DLoxTestSuite {
   static void run<R>({
     required final DLoxTestSuiteDependencies deps,
@@ -22,26 +19,18 @@ abstract class DLoxTestSuite {
     final vm = DloxVM(
       silent: true,
     );
-    final dir_list = dir_contents(
-      Directory(
-        deps.dlox_lib_path.resolve("test_suite").path,
-      ),
-    );
-    for (int k = 0; k < dir_list.length; k++) {
-      final dir = dir_list[k];
+    for (final x in const DloxDatasetAll().children) {
       wrapper.run_group(
-        basename(dir.path),
+        x.name,
         () {
-          // Skip file.
-          if (dir is Directory) {
-            final file_list = dir_contents(dir);
-            for (int k = 0; k < file_list.length; k++) {
-              final file = file_list[k];
+            // Skip file.
+            for (final y in (x as DloxDatasetInternal).children) {
+              final file = y as DloxDatasetLeafImpl;
               const tab = "  ";
               wrapper.run_group(
-                basename(file.path),
+                file.name,
                 () {
-                  final source = File(file.path).readAsStringSync();
+                  final source = file.source;
                   // Create line map
                   final line_number = <int>[];
                   for (int k = 0, line = 0; k < source.length; k++) {
@@ -78,7 +67,7 @@ abstract class DLoxTestSuite {
                       )
                       .toSet();
                   wrapper.run_test("test", (final test_context) {
-                    if (set_eq(err_ref1, err_list1)) {
+                    if (_set_eq(err_ref1, err_list1)) {
                       if (err_list1.isEmpty) {
                         // Run test
                         vm.stdout.clear();
@@ -103,7 +92,7 @@ abstract class DLoxTestSuite {
                             // filter out stack traces
                             .where((final el) => !el.contains(during_execution_regexp))
                             .toSet();
-                        if (set_eq(err_ref2, err_list2)) {
+                        if (_set_eq(err_ref2, err_list2)) {
                           // Extract test reqs
                           final rtn_matches = expect_regexp.allMatches(source);
                           final stdout_ref = rtn_matches.map((final e) => e.group(1)).toList();
@@ -113,7 +102,7 @@ abstract class DLoxTestSuite {
                               .split('\n')
                               .where((final str) => str.isNotEmpty)
                               .toList();
-                          if (!list_eq(stdout_ref, stdout)) {
+                          if (!_list_eq(stdout_ref, stdout)) {
                             return test_context.failed(
                               [
                                 '$tab stdout mismatch',
@@ -149,30 +138,19 @@ abstract class DLoxTestSuite {
                 },
               );
             }
-          }
         },
       );
     }
   }
 
-  static List<FileSystemEntity> dir_contents(
-    final FileSystemEntity dir,
-  ) {
-    if (dir is Directory) {
-      return dir.listSync(recursive: false);
-    } else {
-      throw Exception(dir.toString());
-    }
-  }
-
-  static bool set_eq(
+  static bool _set_eq(
     final Set<dynamic> s1,
     final Set<dynamic> s2,
   ) {
     return s1.length == s2.length && s1.every(s2.contains);
   }
 
-  static bool list_eq(
+  static bool _list_eq(
     final List<dynamic> l1,
     final List<dynamic> l2,
   ) {
@@ -195,12 +173,10 @@ class DLoxTestSuiteDependencies {
     List<Token> tokens,
     Debug debug,
   ) tokens_to_ast;
-  final Uri dlox_lib_path;
 
   const DLoxTestSuiteDependencies({
     required final this.code_to_tokens,
     required final this.tokens_to_ast,
-    required final this.dlox_lib_path,
   });
 }
 

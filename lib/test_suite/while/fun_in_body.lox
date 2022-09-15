@@ -1,2 +1,0 @@
-while (true) fun foo() {} // Error at 'fun': Expect expression.
-

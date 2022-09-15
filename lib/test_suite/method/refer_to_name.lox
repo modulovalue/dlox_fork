@@ -1,7 +1,0 @@
-class Foo {
-  method() {
-    print method; // Runtime error: Undefined variable 'method'.
-  }
-}
-
-Foo().method();

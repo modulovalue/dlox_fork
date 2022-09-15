@@ -1,2 +1,0 @@
-
-// for (var a = 1; a < 2; {}) {} // [disabled] Error at '{': Expect expression.

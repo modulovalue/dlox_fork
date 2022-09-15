@@ -1,3 +1,0 @@
-fun foo(a, b c, d, e, f) // Error at 'c': Expect ')' after parameters.
-{}
-// Error at end: Unterminated block.

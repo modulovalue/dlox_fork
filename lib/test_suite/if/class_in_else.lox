@@ -1,2 +1,0 @@
-if (true) "ok"; else class Foo {} // Error at 'class': Expect expression.
-

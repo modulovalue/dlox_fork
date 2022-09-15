@@ -1,7 +1,5 @@
 import 'model.dart';
 
-// TODO migrate to this.
-// TODO remove filesystem stored testsuite.
 class DloxDatasetAll with DloxDatasetInternal {
   const DloxDatasetAll();
 

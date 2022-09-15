@@ -1,2 +1,0 @@
-if (true) "ok"; else fun foo() {} // Error at 'fun': Expect expression.
-

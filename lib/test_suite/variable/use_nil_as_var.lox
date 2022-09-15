@@ -1,1 +1,0 @@
-var nil = "value"; // Error at 'nil': Expect variable name.
