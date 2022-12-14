@@ -10,6 +10,7 @@ class DloxFunction {
   });
 }
 
+// TODO have a dsl?
 class DloxChunk<INDEX> {
   final List<MapEntry<int, INDEX>> code;
   final DloxHeap heap;

@@ -4,6 +4,7 @@ import 'dart:math';
 import '../../domains/errors.dart';
 import '../../domains/objfunction.dart';
 
+// TODO try to express vm as a recursion scheme
 // region vm
 class DloxVM {
   // region public
@@ -33,30 +34,30 @@ class DloxVM {
     } else {
       _Dlox_VMCallFrame? frame = _frames[_frame_count - 1];
       final step_count_limit = step_count + batch_count;
-      // Main loop
+      // Main loop.
       while (step_count++ < step_count_limit) {
-        // Setup current line
+        // Setup current line.
         final frame_line = frame!.chunk.code[frame.ip].value;
-        // Step code helper
+        // Step code helper.
         if (step_code) {
           final instruction = frame.chunk.code[frame.ip].key;
           final op = DloxOpCode.values[instruction];
-          // Pause execution on demand
+          // Pause execution on demand.
           if (frame_line != _line && _has_op) {
-            // Newline detected, return
-            // No need to set line to frameLine thanks to hasOp
+            // Newline detected, return.
+            // No need to set line to frameLine thanks to hasOp.
             _has_op = false;
             return _get_result(
               line: _line,
             );
           }
-          // A line is worth stopping on if it has one of those opts
+          // A line is worth stopping on if it has one of those opts.
           _has_op |= op != DloxOpCode.POP && op != DloxOpCode.LOOP && op != DloxOpCode.JUMP;
         }
-        // Update line
+        // Update line.
         final prevLine = _line;
         _line = frame_line;
-        // Trace execution if needed
+        // Trace execution if needed.
         if (trace_execution) {
           trace_debug.stdwrite('          ');
           for (int k = 0; k < _stack_top; k++) {
@@ -188,7 +189,7 @@ class DloxVM {
             final a = _pop();
             _push(_values_equal(a, b));
             break;
-        // Optimisation create greater_or_equal
+          // Optimisation create greater_or_equal
           case DloxOpCode.GREATER:
             final b = _pop();
             final a = _pop();
@@ -200,7 +201,7 @@ class DloxVM {
               return _runtime_error('Operands must be numbers or strings');
             }
             break;
-        // Optimisation create less_or_equal
+          // Optimisation create less_or_equal
           case DloxOpCode.LESS:
             final b = _pop();
             final a = _pop();
@@ -462,15 +463,15 @@ class DloxVM {
             }
             break;
           case DloxOpCode.CONTAINER_ITERATE:
-          // Init stack indexes
+            // Init stack indexes.
             final valIdx = _read_byte(frame);
             final keyIdx = valIdx + 1;
             final idxIdx = valIdx + 2;
             final iterableIdx = valIdx + 3;
             final containerIdx = valIdx + 4;
-            // Retrieve data
+            // Retrieve data.
             Object? idxObj = _stack[frame.slots_idx + idxIdx];
-            // Initialize
+            // Initialize.
             if (idxObj == DloxNil) {
               final container = _stack[frame.slots_idx + containerIdx];
               idxObj = 0.0;
@@ -483,18 +484,18 @@ class DloxVM {
               } else {
                 return _runtime_error('Iterable must be Strings, Lists or Maps');
               }
-              // Pop container from stack
+              // Pop container from stack.
               _pop();
             }
-            // Iterate
+            // Iterate.
             final idx = (idxObj as double?)!;
             final iterable = (_stack[frame.slots_idx + iterableIdx] as List?)!;
             if (idx >= iterable.length) {
-              // Return early
+              // Return early.
               _push(false);
               break;
             } else {
-              // Populate key & value
+              // Populate key & value.
               final dynamic item = iterable[idx.toInt()];
               if (item is MapEntry) {
                 _stack[frame.slots_idx + keyIdx] = item.key;
@@ -503,7 +504,7 @@ class DloxVM {
                 _stack[frame.slots_idx + keyIdx] = idx;
                 _stack[frame.slots_idx + valIdx] = item;
               }
-              // Increment index
+              // Increment index.
               _stack[frame.slots_idx + idxIdx] = idx + 1;
               _push(true);
               break;
@@ -608,11 +609,8 @@ class DloxVM {
         globals = DloxTable(),
         _errors = [],
         _stack = List<Object?>.filled(_DLOXVM_STACK_MAX, null),
-        _frames = List<_Dlox_VMCallFrame?>.filled(_DLOXVM_FRAMES_MAX, null) {
+        _frames = List<_Dlox_VMCallFrame?>.generate(_DLOXVM_FRAMES_MAX, (final _) => _Dlox_VMCallFrame()) {
     _reset();
-    for (int k = 0; k < _frames.length; k++) {
-      _frames[k] = _Dlox_VMCallFrame();
-    }
   }
 
   // region internal
@@ -650,23 +648,23 @@ class DloxVM {
   }
 
   void _reset() {
-    // Reset data
+    // Reset data.
     _errors.clear();
     globals.data.clear();
     _strings.data.clear();
     _stack_top = 0;
     _frame_count = 0;
     _open_upvalues = null;
-    // Reset debug values
+    // Reset debug values.
     step_count = 0;
     _line = -1;
     _has_op = false;
     stdout.clear();
     _err_debug.clear();
     trace_debug.clear();
-    // Reset flags
+    // Reset flags.
     step_code = false;
-    // Define natives
+    // Define natives.
     _define_natives();
   }
 

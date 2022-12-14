@@ -1,6 +1,7 @@
+// TODO some tokens have a fixed width, I shouldn't store it and statically make use of that fact.
 class TokenAug {
   // TODO have width here.
-  // TODO it seems that there are synthetic tokens where this is -1, handle them cleanly.
+  // TODO it seems like there are synthetic tokens where this is -1, handle them cleanly.
   final int line;
 
   // TODO this will be derivable from the widths. remove it once that is the case.

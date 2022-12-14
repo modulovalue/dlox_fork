@@ -26,14 +26,17 @@ class CompilerError implements LangError {
   });
 
   @override
-  int get line => token.aug.line;
+  int get line {
+    return token.aug.line;
+  }
 
   @override
   R match<R>({
     required final R Function(CompilerError) compiler,
     required final R Function(RuntimeError) runtime,
-  }) =>
-      compiler(this);
+  }) {
+    return compiler(this);
+  }
 }
 
 class RuntimeError implements LangError {
@@ -53,8 +56,9 @@ class RuntimeError implements LangError {
   R match<R>({
     required final R Function(CompilerError) compiler,
     required final R Function(RuntimeError) runtime,
-  }) =>
-      runtime(this);
+  }) {
+    return runtime(this);
+  }
 }
 
 // region debug
@@ -70,7 +74,7 @@ class Debug {
         errors = [],
         panic_mode = false;
 
-  // region infrastructure
+// region infrastructure
   void restore() {
     panic_mode = false;
   }
@@ -110,12 +114,13 @@ class Debug {
           a.line,
         ),
       ),
-      runtime: (final a) => stdwriteln(describe_error(
-        null,
-        "Runtime",
-        a.msg,
-        a.line,
-      ),
+      runtime: (final a) => stdwriteln(
+        describe_error(
+          null,
+          "Runtime",
+          a.msg,
+          a.line,
+        ),
       ),
     );
   }
@@ -172,9 +177,9 @@ class Debug {
   ) {
     stdwrite(value_to_string(value));
   }
-  // endregion
+// endregion
 
-  // region disassembler
+// region disassembler
   void disassemble_chunk(
     final DloxChunk<int> chunk,
     final String name,
@@ -251,7 +256,8 @@ class Debug {
     final int offset,
   ) {
     final jump = (chunk.code[offset + 1].key << 8) | chunk.code[offset + 2].key;
-    stdwrite(sprintf('%-16s %4d -> %d\n', [name, offset, offset + 3 + sign * jump]));
+    stdwrite(
+        sprintf('%-16s %4d -> %d\n', [name, offset, offset + 3 + sign * jump]));
     return offset + 3;
   }
 
@@ -395,7 +401,7 @@ class Debug {
         throw Exception('Unknown opcode $instruction');
     }
   }
-  // endregion
+// endregion
 }
 
 String? value_to_string(
@@ -458,7 +464,8 @@ String map_to_string(
   final entries = map.entries.toList();
   for (int k = 0; k < entries.length; k++) {
     if (k > 0) buf.write(',');
-    buf.write(value_to_string(entries[k].key, max_chars: max_chars - buf.length));
+    buf.write(
+        value_to_string(entries[k].key, max_chars: max_chars - buf.length));
     buf.write(':');
     buf.write(value_to_string(
       entries[k].value,
