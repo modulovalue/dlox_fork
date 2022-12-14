@@ -6,119 +6,512 @@ import '../../domains/objfunction.dart';
 
 // region vm
 class DloxVM {
-  static const String INIT_STRING = 'init';
+  // region public
+  bool get done {
+    return _frame_count == 0;
+  }
 
-  // region data
-  final List<_Dlox_VMCallFrame?> frames;
-  final List<Object?> stack;
+  DloxVMInterpreterResult run() {
+    DloxVMInterpreterResult? res;
+    do {
+      res = step_batch();
+    } while (res == null);
+    return res;
+  }
 
-  // endregion
-  // region vm state
-  final List<RuntimeError> errors;
-  final DloxTable globals;
-  final DloxTable strings;
-  DloxFunction? compiled_function;
-  int frame_count;
-  int stack_top;
-  DloxUpvalue? open_upvalues;
-
-  // endregion
-  // region debug variables
-  int step_count;
-  int line;
-  bool has_op;
-
-  // endregion
-  // region debug api
-  bool trace_execution;
-  bool step_code;
-  final Debug err_debug;
-  final Debug trace_debug;
-  final Debug stdout;
-
-  // endregion
-
-  DloxVM({
-    required final bool silent,
-  })  : err_debug = Debug(
-          silent: silent,
-        ),
-        trace_debug = Debug(
-          silent: silent,
-        ),
-        stdout = Debug(
-          silent: silent,
-        ),
-        step_code = false,
-        trace_execution = false,
-        has_op = false,
-        line = -1,
-        step_count = 0,
-        stack_top = 0,
-        frame_count = 0,
-        strings = DloxTable(),
-        globals = DloxTable(),
-        errors = [],
-        stack = List<Object?>.filled(_DLOXVM_STACK_MAX, null),
-        frames = List<_Dlox_VMCallFrame?>.filled(_DLOXVM_FRAMES_MAX, null) {
-    _reset();
-    for (int k = 0; k < frames.length; k++) {
-      frames[k] = _Dlox_VMCallFrame();
+  DloxVMInterpreterResult? step_batch({
+    final int batch_count = _DLOXVM_BATCH_COUNT,
+  }) {
+    // Setup
+    if (_frame_count == 0) {
+      _add_error(
+        msg: 'No call frame',
+        line: _line,
+        link: null,
+      );
+      return _result;
+    } else {
+      _Dlox_VMCallFrame? frame = _frames[_frame_count - 1];
+      final step_count_limit = step_count + batch_count;
+      // Main loop
+      while (step_count++ < step_count_limit) {
+        // Setup current line
+        final frame_line = frame!.chunk.code[frame.ip].value;
+        // Step code helper
+        if (step_code) {
+          final instruction = frame.chunk.code[frame.ip].key;
+          final op = DloxOpCode.values[instruction];
+          // Pause execution on demand
+          if (frame_line != _line && _has_op) {
+            // Newline detected, return
+            // No need to set line to frameLine thanks to hasOp
+            _has_op = false;
+            return _get_result(
+              line: _line,
+            );
+          }
+          // A line is worth stopping on if it has one of those opts
+          _has_op |= op != DloxOpCode.POP && op != DloxOpCode.LOOP && op != DloxOpCode.JUMP;
+        }
+        // Update line
+        final prevLine = _line;
+        _line = frame_line;
+        // Trace execution if needed
+        if (trace_execution) {
+          trace_debug.stdwrite('          ');
+          for (int k = 0; k < _stack_top; k++) {
+            trace_debug.stdwrite('[ ');
+            trace_debug.print_value(_stack[k]);
+            trace_debug.stdwrite(' ]');
+          }
+          trace_debug.stdwrite('\n');
+          trace_debug.disassemble_instruction(prevLine, frame.closure.function.chunk, frame.ip);
+        }
+        final instruction = _read_byte(frame);
+        switch (DloxOpCode.values[instruction]) {
+          case DloxOpCode.CONSTANT:
+            final constant = _read_constant(frame);
+            _push(constant);
+            break;
+          case DloxOpCode.NIL:
+            _push(DloxNil);
+            break;
+          case DloxOpCode.TRUE:
+            _push(true);
+            break;
+          case DloxOpCode.FALSE:
+            _push(false);
+            break;
+          case DloxOpCode.POP:
+            _pop();
+            break;
+          case DloxOpCode.GET_LOCAL:
+            final slot = _read_byte(frame);
+            _push(_stack[frame.slots_idx + slot]);
+            break;
+          case DloxOpCode.SET_LOCAL:
+            final slot = _read_byte(frame);
+            _stack[frame.slots_idx + slot] = _peek(0);
+            break;
+          case DloxOpCode.GET_GLOBAL:
+            final name = _read_string(frame)!;
+            final value = globals.get_val(name);
+            if (value == null) {
+              return _runtime_error("Undefined variable '" + name + "'");
+            } else {
+              _push(value);
+              break;
+            }
+          case DloxOpCode.DEFINE_GLOBAL:
+            final name = _read_string(frame);
+            globals.set_val(name, _peek(0));
+            _pop();
+            break;
+          case DloxOpCode.SET_GLOBAL:
+            final name = _read_string(frame)!;
+            if (globals.set_val(name, _peek(0))) {
+              globals.delete(name); // [delete]
+              return _runtime_error("Undefined variable '" + name + "'");
+            } else {
+              break;
+            }
+          case DloxOpCode.GET_UPVALUE:
+            final slot = _read_byte(frame);
+            final upvalue = frame.closure.upvalues[slot]!;
+            _push(
+                  () {
+                if (upvalue.location != null) {
+                  return _stack[upvalue.location!];
+                } else {
+                  return upvalue.closed;
+                }
+              }(),
+            );
+            break;
+          case DloxOpCode.SET_UPVALUE:
+            final slot = _read_byte(frame);
+            final upvalue = frame.closure.upvalues[slot]!;
+            if (upvalue.location != null) {
+              _stack[upvalue.location!] = _peek(0);
+            } else {
+              upvalue.closed = _peek(0);
+            }
+            break;
+          case DloxOpCode.GET_PROPERTY:
+            Object? value;
+            if (_peek(0) is DloxInstance) {
+              final instance = (_peek(0) as DloxInstance?)!;
+              final name = _read_string(frame);
+              value = instance.fields.get_val(name);
+              if (value == null && !_bind_method(instance.klass!, name)) {
+                return _result;
+              }
+            } else if (_peek(0) is ObjNativeClass) {
+              final instance = (_peek(0) as ObjNativeClass?)!;
+              final name = _read_string(frame);
+              try {
+                value = instance.get_val(name);
+              } on _NativeError catch (e) {
+                return _runtime_error(e.error);
+              }
+            } else {
+              return _runtime_error('Only instances have properties');
+            }
+            if (value != null) {
+              _pop(); // Instance.
+              _push(value);
+            }
+            break;
+          case DloxOpCode.SET_PROPERTY:
+            if (_peek(1) is DloxInstance) {
+              final DloxInstance instance = (_peek(1) as DloxInstance?)!;
+              instance.fields.set_val(_read_string(frame), _peek(0));
+            } else if (_peek(1) is ObjNativeClass) {
+              final ObjNativeClass instance = (_peek(1) as ObjNativeClass?)!;
+              instance.set_val(_read_string(frame), _peek(0));
+            } else {
+              return _runtime_error('Only instances have fields');
+            }
+            final value = _pop();
+            _pop();
+            _push(value);
+            break;
+          case DloxOpCode.GET_SUPER:
+            final name = _read_string(frame);
+            final DloxClass superclass = (_pop() as DloxClass?)!;
+            if (!_bind_method(superclass, name)) {
+              return _result;
+            }
+            break;
+          case DloxOpCode.EQUAL:
+            final b = _pop();
+            final a = _pop();
+            _push(_values_equal(a, b));
+            break;
+        // Optimisation create greater_or_equal
+          case DloxOpCode.GREATER:
+            final b = _pop();
+            final a = _pop();
+            if (a is String && b is String) {
+              _push(a.compareTo(b));
+            } else if (a is double && b is double) {
+              _push(a > b);
+            } else {
+              return _runtime_error('Operands must be numbers or strings');
+            }
+            break;
+        // Optimisation create less_or_equal
+          case DloxOpCode.LESS:
+            final b = _pop();
+            final a = _pop();
+            if (a is String && b is String) {
+              _push(b.compareTo(a));
+            } else if (a is double && b is double) {
+              _push(a < b);
+            } else {
+              return _runtime_error('Operands must be numbers or strings');
+            }
+            break;
+          case DloxOpCode.ADD:
+            final b = _pop();
+            final a = _pop();
+            if ((a is double) && (b is double)) {
+              _push(a + b);
+            } else if ((a is String) && (b is String)) {
+              _push(a + b);
+            } else if ((a is List) && (b is List)) {
+              _push(a + b);
+            } else if ((a is Map) && (b is Map)) {
+              final res = <dynamic, dynamic>{};
+              res.addAll(a);
+              res.addAll(b);
+              _push(res);
+            } else if ((a is String) || (b is String)) {
+              _push(value_to_string(a, quoteEmpty: false)! + value_to_string(b, quoteEmpty: false)!);
+            } else {
+              return _runtime_error('Operands must numbers, strings, lists or maps');
+            }
+            break;
+          case DloxOpCode.SUBTRACT:
+            final b = _pop();
+            final a = _pop();
+            if (!_assert_number(a, b)) return _result;
+            _push((a as double?)! - (b as double?)!);
+            break;
+          case DloxOpCode.MULTIPLY:
+            final b = _pop();
+            final a = _pop();
+            if (!_assert_number(a, b)) return _result;
+            _push((a as double?)! * (b as double?)!);
+            break;
+          case DloxOpCode.DIVIDE:
+            final b = _pop();
+            final a = _pop();
+            if (!_assert_number(a, b)) return _result;
+            _push((a as double?)! / (b as double?)!);
+            break;
+          case DloxOpCode.POW:
+            final b = _pop();
+            final a = _pop();
+            if (!_assert_number(a, b)) return _result;
+            _push(pow((a as double?)!, (b as double?)!));
+            break;
+          case DloxOpCode.MOD:
+            final b = _pop();
+            final a = _pop();
+            if (!_assert_number(a, b)) return _result;
+            _push((a as double?)! % (b as double?)!);
+            break;
+          case DloxOpCode.NOT:
+            _push(_is_falsey(_pop()));
+            break;
+          case DloxOpCode.NEGATE:
+            if (!(_peek(0) is double)) {
+              return _runtime_error('Operand must be a number');
+            } else {
+              _push(-(_pop() as double?)!);
+              break;
+            }
+          case DloxOpCode.PRINT:
+            final val = value_to_string(_pop());
+            stdout.stdwriteln(val ?? "");
+            break;
+          case DloxOpCode.JUMP:
+            final offset = _read_short(frame);
+            frame.ip += offset;
+            break;
+          case DloxOpCode.JUMP_IF_FALSE:
+            final offset = _read_short(frame);
+            if (_is_falsey(_peek(0))) frame.ip += offset;
+            break;
+          case DloxOpCode.LOOP:
+            final offset = _read_short(frame);
+            frame.ip -= offset;
+            break;
+          case DloxOpCode.CALL:
+            final arg_count = _read_byte(frame);
+            if (!_call_value(_peek(arg_count), arg_count)) {
+              return _result;
+            } else {
+              frame = _frames[_frame_count - 1];
+              break;
+            }
+          case DloxOpCode.INVOKE:
+            final method = _read_string(frame);
+            final arg_count = _read_byte(frame);
+            if (!_invoke(method, arg_count)) {
+              return _result;
+            } else {
+              frame = _frames[_frame_count - 1];
+              break;
+            }
+          case DloxOpCode.SUPER_INVOKE:
+            final method = _read_string(frame);
+            final arg_count = _read_byte(frame);
+            final superclass = (_pop() as DloxClass?)!;
+            if (!_invoke_from_class(superclass, method, arg_count)) {
+              return _result;
+            } else {
+              frame = _frames[_frame_count - 1];
+              break;
+            }
+          case DloxOpCode.CLOSURE:
+            final function = (_read_constant(frame) as DloxFunction?)!;
+            final closure = DloxClosure(
+              function: function,
+              upvalues: List<DloxUpvalue?>.filled(function.chunk.upvalue_count, null),
+            );
+            _push(closure);
+            for (int i = 0; i < closure.upvalues.length; i++) {
+              final isLocal = _read_byte(frame);
+              final index = _read_byte(frame);
+              if (isLocal == 1) {
+                closure.upvalues[i] = _capture_upvalue(frame.slots_idx + index);
+              } else {
+                closure.upvalues[i] = frame.closure.upvalues[index];
+              }
+            }
+            break;
+          case DloxOpCode.CLOSE_UPVALUE:
+            _close_upvalues(_stack_top - 1);
+            _pop();
+            break;
+          case DloxOpCode.RETURN:
+            final res = _pop();
+            _close_upvalues(frame.slots_idx);
+            _frame_count--;
+            // ignore: invariant_booleans
+            if (_frame_count == 0) {
+              _pop();
+              return _get_result(
+                line: _line,
+                return_value: res,
+              );
+            } else {
+              _stack_top = frame.slots_idx;
+              _push(res);
+              frame = _frames[_frame_count - 1];
+              break;
+            }
+          case DloxOpCode.CLASS:
+            _push(DloxClass(_read_string(frame)));
+            break;
+          case DloxOpCode.INHERIT:
+            final sup = _peek(1);
+            if (!(sup is DloxClass)) {
+              return _runtime_error('Superclass must be a class');
+            } else {
+              final DloxClass superclass = sup;
+              final DloxClass subclass = (_peek(0) as DloxClass?)!;
+              subclass.methods.add_all(superclass.methods);
+              _pop(); // Subclass.
+              break;
+            }
+          case DloxOpCode.METHOD:
+            _define_method(_read_string(frame));
+            break;
+          case DloxOpCode.LIST_INIT:
+            final valCount = _read_byte(frame);
+            final arr = <dynamic>[];
+            for (int k = 0; k < valCount; k++) {
+              arr.add(_peek(valCount - k - 1));
+            }
+            _stack_top -= valCount;
+            _push(arr);
+            break;
+          case DloxOpCode.LIST_INIT_RANGE:
+            if (!(_peek(0) is double) || !(_peek(1) is double)) {
+              return _runtime_error('List initializer bounds must be number');
+            } else {
+              final start = (_peek(1) as double?)!;
+              final end = (_peek(0) as double?)!;
+              if (end - start == double.infinity) {
+                return _runtime_error('Invalid list initializer');
+              } else {
+                final arr = <dynamic>[];
+                for (double k = start; k < end; k++) {
+                  arr.add(k);
+                }
+                _stack_top -= 2;
+                _push(arr);
+                break;
+              }
+            }
+          case DloxOpCode.MAP_INIT:
+            final valCount = _read_byte(frame);
+            final map = <dynamic, dynamic>{};
+            for (int k = 0; k < valCount; k++) {
+              map[_peek((valCount - k - 1) * 2 + 1)] = _peek((valCount - k - 1) * 2);
+            }
+            _stack_top -= 2 * valCount;
+            _push(map);
+            break;
+          case DloxOpCode.CONTAINER_GET:
+            final idxObj = _pop();
+            final container = _pop();
+            if (container is List) {
+              final idx = _check_index(container.length, idxObj);
+              if (idx == null) return _result;
+              _push(container[idx]);
+            } else if (container is Map) {
+              _push(container[idxObj]);
+            } else if (container is String) {
+              final idx = _check_index(container.length, idxObj);
+              if (idx == null) return _result;
+              _push(container[idx]);
+            } else {
+              return _runtime_error(
+                'Indexing targets must be Strings, Lists or Maps',
+              );
+            }
+            break;
+          case DloxOpCode.CONTAINER_SET:
+            final val = _pop();
+            final idx_obj = _pop();
+            final container = _pop();
+            if (container is List) {
+              final idx = _check_index(container.length, idx_obj);
+              if (idx == null) return _result;
+              container[idx] = val;
+            } else if (container is Map) {
+              container[idx_obj] = val;
+            } else {
+              return _runtime_error('Indexing targets must be Lists or Maps');
+            }
+            _push(val);
+            break;
+          case DloxOpCode.CONTAINER_GET_RANGE:
+            Object? bIdx = _pop();
+            Object? aIdx = _pop();
+            final container = _pop();
+            int length = 0;
+            if (container is List) {
+              length = container.length;
+            } else if (container is String) {
+              length = container.length;
+            } else {
+              return _runtime_error('Range indexing targets must be Lists or Strings');
+            }
+            aIdx = _check_index(length, aIdx);
+            bIdx = _check_index(length, bIdx, fromStart: false);
+            if (aIdx == null || bIdx == null) return _result;
+            if (container is List) {
+              _push(container.sublist(aIdx as int, bIdx as int?));
+            } else if (container is String) {
+              _push(container.substring(aIdx as int, bIdx as int?));
+            }
+            break;
+          case DloxOpCode.CONTAINER_ITERATE:
+          // Init stack indexes
+            final valIdx = _read_byte(frame);
+            final keyIdx = valIdx + 1;
+            final idxIdx = valIdx + 2;
+            final iterableIdx = valIdx + 3;
+            final containerIdx = valIdx + 4;
+            // Retrieve data
+            Object? idxObj = _stack[frame.slots_idx + idxIdx];
+            // Initialize
+            if (idxObj == DloxNil) {
+              final container = _stack[frame.slots_idx + containerIdx];
+              idxObj = 0.0;
+              if (container is String) {
+                _stack[frame.slots_idx + iterableIdx] = container.split('');
+              } else if (container is List) {
+                _stack[frame.slots_idx + iterableIdx] = container;
+              } else if (container is Map) {
+                _stack[frame.slots_idx + iterableIdx] = container.entries.toList();
+              } else {
+                return _runtime_error('Iterable must be Strings, Lists or Maps');
+              }
+              // Pop container from stack
+              _pop();
+            }
+            // Iterate
+            final idx = (idxObj as double?)!;
+            final iterable = (_stack[frame.slots_idx + iterableIdx] as List?)!;
+            if (idx >= iterable.length) {
+              // Return early
+              _push(false);
+              break;
+            } else {
+              // Populate key & value
+              final dynamic item = iterable[idx.toInt()];
+              if (item is MapEntry) {
+                _stack[frame.slots_idx + keyIdx] = item.key;
+                _stack[frame.slots_idx + valIdx] = item.value;
+              } else {
+                _stack[frame.slots_idx + keyIdx] = idx;
+                _stack[frame.slots_idx + valIdx] = item;
+              }
+              // Increment index
+              _stack[frame.slots_idx + idxIdx] = idx + 1;
+              _push(true);
+              break;
+            }
+        }
+      }
+      return null;
     }
-  }
-
-  RuntimeError add_error({
-    required final String msg,
-    required final RuntimeError? link,
-    required final int line,
-  }) {
-    final error = RuntimeError(
-      line: line,
-      msg: msg,
-      link: link,
-    );
-    errors.add(error);
-    err_debug.write_error(error);
-    return error;
-  }
-
-  DloxVMInterpreterResult get_result({
-    required final int line,
-    final Object? return_value,
-  }) {
-    return DloxVMInterpreterResult(
-      errors: errors,
-      last_line: line,
-      step_count: step_count,
-      return_value: return_value,
-    );
-  }
-
-  DloxVMInterpreterResult get result {
-    return get_result(
-      line: line,
-    );
-  }
-
-  void _reset() {
-    // Reset data
-    errors.clear();
-    globals.data.clear();
-    strings.data.clear();
-    stack_top = 0;
-    frame_count = 0;
-    open_upvalues = null;
-    // Reset debug values
-    step_count = 0;
-    line = -1;
-    has_op = false;
-    stdout.clear();
-    err_debug.clear();
-    trace_debug.clear();
-    // Reset flags
-    step_code = false;
-    // Define natives
-    define_natives();
   }
 
   void set_function(
@@ -131,7 +524,6 @@ class DloxVM {
     if (errors.isNotEmpty) {
       throw Exception('Compiler result had errors');
     } else {
-      this.compiled_function = function;
       // Set function
       DloxFunction? fun = function;
       if (params.function != null) {
@@ -158,15 +550,127 @@ class DloxVM {
         function: fun!,
         upvalues: List<DloxUpvalue?>.filled(fun.chunk.upvalue_count, null),
       );
-      push(closure);
+      _push(closure);
       if (params.args != null) {
-        params.args!.forEach(push);
+        params.args!.forEach(_push);
       }
-      call_value(closure, params.args?.length ?? 0);
+      _call_value(closure, params.args?.length ?? 0);
+    }
+  }
+  // endregion
+  
+  static const String _INIT_STRING = 'init';
+
+  // region data
+  final List<_Dlox_VMCallFrame?> _frames;
+  final List<Object?> _stack;
+  // endregion
+  // region vm state
+  final List<RuntimeError> _errors;
+  final DloxTable globals;
+  final DloxTable _strings;
+  int _frame_count;
+  int _stack_top;
+  DloxUpvalue? _open_upvalues;
+  // endregion
+  // region debug variables
+  int step_count;
+  int _line;
+  bool _has_op;
+  // endregion
+  // region debug api
+  bool trace_execution;
+  bool step_code;
+  final Debug _err_debug;
+  final Debug trace_debug;
+  final Debug stdout;
+  // endregion
+
+  DloxVM({
+    required final bool silent,
+  })  : _err_debug = Debug(
+          silent: silent,
+        ),
+        trace_debug = Debug(
+          silent: silent,
+        ),
+        stdout = Debug(
+          silent: silent,
+        ),
+        step_code = false,
+        trace_execution = false,
+        _has_op = false,
+        _line = -1,
+        step_count = 0,
+        _stack_top = 0,
+        _frame_count = 0,
+        _strings = DloxTable(),
+        globals = DloxTable(),
+        _errors = [],
+        _stack = List<Object?>.filled(_DLOXVM_STACK_MAX, null),
+        _frames = List<_Dlox_VMCallFrame?>.filled(_DLOXVM_FRAMES_MAX, null) {
+    _reset();
+    for (int k = 0; k < _frames.length; k++) {
+      _frames[k] = _Dlox_VMCallFrame();
     }
   }
 
-  void define_natives() {
+  // region internal
+  RuntimeError _add_error({
+    required final String msg,
+    required final RuntimeError? link,
+    required final int line,
+  }) {
+    final error = RuntimeError(
+      line: line,
+      msg: msg,
+      link: link,
+    );
+    _errors.add(error);
+    _err_debug.write_error(error);
+    return error;
+  }
+
+  DloxVMInterpreterResult _get_result({
+    required final int line,
+    final Object? return_value,
+  }) {
+    return DloxVMInterpreterResult(
+      errors: _errors,
+      last_line: line,
+      step_count: step_count,
+      return_value: return_value,
+    );
+  }
+
+  DloxVMInterpreterResult get _result {
+    return _get_result(
+      line: _line,
+    );
+  }
+
+  void _reset() {
+    // Reset data
+    _errors.clear();
+    globals.data.clear();
+    _strings.data.clear();
+    _stack_top = 0;
+    _frame_count = 0;
+    _open_upvalues = null;
+    // Reset debug values
+    step_count = 0;
+    _line = -1;
+    _has_op = false;
+    stdout.clear();
+    _err_debug.clear();
+    trace_debug.clear();
+    // Reset flags
+    step_code = false;
+    // Define natives
+    _define_natives();
+  }
+
+  void _define_natives() {
     for (final function in _NATIVE_FUNCTIONS) {
       globals.set_val(function.name, function);
     }
@@ -178,243 +682,243 @@ class DloxVM {
     });
   }
 
-  void push(
+  void _push(
     final Object? value,
   ) {
-    stack[stack_top++] = value;
+    _stack[_stack_top++] = value;
   }
 
-  Object? pop() {
-    return stack[--stack_top];
+  Object? _pop() {
+    return _stack[--_stack_top];
   }
 
-  Object? peek(
+  Object? _peek(
     final int distance,
   ) {
-    return stack[stack_top - distance - 1];
+    return _stack[_stack_top - distance - 1];
   }
 
-  bool call(
+  bool _call(
     final DloxClosure closure,
     final int arg_count,
   ) {
     if (arg_count != closure.function.arity) {
-      runtime_error('Expected ${closure.function.arity} arguments but got ${arg_count}');
+      _runtime_error('Expected ${closure.function.arity} arguments but got ${arg_count}');
       return false;
     } else {
-      if (frame_count == _DLOXVM_FRAMES_MAX) {
-        runtime_error('Stack overflow');
+      if (_frame_count == _DLOXVM_FRAMES_MAX) {
+        _runtime_error('Stack overflow');
         return false;
       } else {
-        final frame = frames[frame_count++]!;
+        final frame = _frames[_frame_count++]!;
         frame.closure = closure;
         frame.chunk = closure.function.chunk;
         frame.ip = 0;
-        frame.slots_idx = stack_top - arg_count - 1;
+        frame.slots_idx = _stack_top - arg_count - 1;
         return true;
       }
     }
   }
 
-  bool call_value(
+  bool _call_value(
     final Object? callee,
     final int arg_count,
   ) {
     if (callee is DloxBoundMethod) {
-      stack[stack_top - arg_count - 1] = callee.receiver;
-      return call(callee.method, arg_count);
+      _stack[_stack_top - arg_count - 1] = callee.receiver;
+      return _call(callee.method, arg_count);
     } else if (callee is DloxClass) {
-      stack[stack_top - arg_count - 1] = DloxInstance(
+      _stack[_stack_top - arg_count - 1] = DloxInstance(
         klass: callee,
         fields: DloxTable(),
       );
-      final initializer = callee.methods.get_val(INIT_STRING);
+      final initializer = callee.methods.get_val(_INIT_STRING);
       if (initializer != null) {
-        return call(initializer as DloxClosure, arg_count);
+        return _call(initializer as DloxClosure, arg_count);
       } else if (arg_count != 0) {
-        runtime_error('Expected 0 arguments but got ' + arg_count.toString());
+        _runtime_error('Expected 0 arguments but got ' + arg_count.toString());
         return false;
       }
       return true;
     } else if (callee is DloxClosure) {
-      return call(callee, arg_count);
+      return _call(callee, arg_count);
     } else if (callee is DloxNative) {
-      final res = callee.fn(stack, stack_top - arg_count, arg_count);
-      stack_top -= arg_count + 1;
-      push(res);
+      final res = callee.fn(_stack, _stack_top - arg_count, arg_count);
+      _stack_top -= arg_count + 1;
+      _push(res);
       return true;
     } else if (callee is NativeClassCreator) {
       try {
-        final res = callee(stack, stack_top - arg_count, arg_count);
-        stack_top -= arg_count + 1;
-        push(res);
+        final res = callee(_stack, _stack_top - arg_count, arg_count);
+        _stack_top -= arg_count + 1;
+        _push(res);
       } on _NativeError catch (e) {
-        runtime_error(e.error);
+        _runtime_error(e.error);
         return false;
       }
       return true;
     } else {
-      runtime_error('Can only call functions and classes');
+      _runtime_error('Can only call functions and classes');
       return false;
     }
   }
 
-  bool invoke_from_class(
+  bool _invoke_from_class(
     final DloxClass klass,
     final String? name,
     final int arg_count,
   ) {
     final method = klass.methods.get_val(name);
     if (method == null) {
-      runtime_error("Undefined property '" + name.toString() + "'");
+      _runtime_error("Undefined property '" + name.toString() + "'");
       return false;
     } else {
-      return call(method as DloxClosure, arg_count);
+      return _call(method as DloxClosure, arg_count);
     }
   }
 
-  bool invoke_map(
+  bool _invoke_map(
     final Map<dynamic, dynamic> map,
     final String? name,
     final int arg_count,
   ) {
     if (!_MAP_NATIVE_FUNCTIONS.containsKey(name)) {
-      runtime_error('Unknown method for map');
+      _runtime_error('Unknown method for map');
       return false;
     } else {
       final function = _MAP_NATIVE_FUNCTIONS[name!]!;
       try {
-        final rtn = function(map, stack, stack_top - arg_count, arg_count);
-        stack_top -= arg_count + 1;
-        push(rtn);
+        final rtn = function(map, _stack, _stack_top - arg_count, arg_count);
+        _stack_top -= arg_count + 1;
+        _push(rtn);
         return true;
       } on _NativeError catch (e) {
-        runtime_error(e.error);
+        _runtime_error(e.error);
         return false;
       }
     }
   }
 
-  bool invoke_list(
+  bool _invoke_list(
     final List<dynamic> list,
     final String? name,
     final int arg_count,
   ) {
     if (!_LIST_NATIVE_FUNCTIONS.containsKey(name)) {
-      runtime_error('Unknown method for list');
+      _runtime_error('Unknown method for list');
       return false;
     } else {
       final function = _LIST_NATIVE_FUNCTIONS[name!]!;
       try {
-        final rtn = function(list, stack, stack_top - arg_count, arg_count);
-        stack_top -= arg_count + 1;
-        push(rtn);
+        final rtn = function(list, _stack, _stack_top - arg_count, arg_count);
+        _stack_top -= arg_count + 1;
+        _push(rtn);
         return true;
       } on _NativeError catch (e) {
-        runtime_error(e.error);
+        _runtime_error(e.error);
         return false;
       }
     }
   }
 
-  bool invoke_string(
+  bool _invoke_string(
     final String str,
     final String? name,
     final int arg_count,
   ) {
     if (!_STRING_NATIVE_FUNCTIONS.containsKey(name)) {
-      runtime_error('Unknown method for string');
+      _runtime_error('Unknown method for string');
       return false;
     } else {
       final function = _STRING_NATIVE_FUNCTIONS[name!]!;
       try {
-        final rtn = function(str, stack, stack_top - arg_count, arg_count);
-        stack_top -= arg_count + 1;
-        push(rtn);
+        final rtn = function(str, _stack, _stack_top - arg_count, arg_count);
+        _stack_top -= arg_count + 1;
+        _push(rtn);
         return true;
       } on _NativeError catch (e) {
-        runtime_error(e.error);
+        _runtime_error(e.error);
         return false;
       }
     }
   }
 
-  bool invoke_native_class(
+  bool _invoke_native_class(
     final ObjNativeClass klass,
     final String? name,
     final int arg_count,
   ) {
     try {
-      final rtn = klass.call_(name, stack, stack_top - arg_count, arg_count);
-      stack_top -= arg_count + 1;
-      push(rtn);
+      final rtn = klass.call_(name, _stack, _stack_top - arg_count, arg_count);
+      _stack_top -= arg_count + 1;
+      _push(rtn);
       return true;
     } on _NativeError catch (e) {
-      runtime_error(e.error);
+      _runtime_error(e.error);
       return false;
     }
   }
 
-  bool invoke(
+  bool _invoke(
     final String? name,
     final int arg_count,
   ) {
-    final receiver = peek(arg_count);
+    final receiver = _peek(arg_count);
     if (receiver is List) {
-      return invoke_list(receiver, name, arg_count);
+      return _invoke_list(receiver, name, arg_count);
     } else if (receiver is Map) {
-      return invoke_map(receiver, name, arg_count);
+      return _invoke_map(receiver, name, arg_count);
     } else if (receiver is String) {
-      return invoke_string(receiver, name, arg_count);
+      return _invoke_string(receiver, name, arg_count);
     } else if (receiver is ObjNativeClass) {
-      return invoke_native_class(receiver, name, arg_count);
+      return _invoke_native_class(receiver, name, arg_count);
     } else if (!(receiver is DloxInstance)) {
-      runtime_error('Only instances have methods');
+      _runtime_error('Only instances have methods');
       return false;
     } else {
       final instance = receiver;
       final value = instance.fields.get_val(name);
       if (value != null) {
-        stack[stack_top - arg_count - 1] = value;
-        return call_value(value, arg_count);
+        _stack[_stack_top - arg_count - 1] = value;
+        return _call_value(value, arg_count);
       } else {
         if (instance.klass == null) {
           final klass = globals.get_val(instance.klass_name);
           if (klass is! DloxClass) {
-            runtime_error('Class ${instance.klass_name} not found');
+            _runtime_error('Class ${instance.klass_name} not found');
             return false;
           }
           instance.klass = klass;
         }
-        return invoke_from_class(instance.klass!, name, arg_count);
+        return _invoke_from_class(instance.klass!, name, arg_count);
       }
     }
   }
 
-  bool bind_method(
+  bool _bind_method(
     final DloxClass klass,
     final String? name,
   ) {
     final method = klass.methods.get_val(name);
     if (method == null) {
-      runtime_error("Undefined property '${name}'");
+      _runtime_error("Undefined property '${name}'");
       return false;
     } else {
       final bound = DloxBoundMethod(
-        receiver: peek(0),
+        receiver: _peek(0),
         method: method as DloxClosure,
       );
-      pop();
-      push(bound);
+      _pop();
+      _push(bound);
       return true;
     }
   }
 
-  DloxUpvalue capture_upvalue(
+  DloxUpvalue _capture_upvalue(
     final int localIdx,
   ) {
     DloxUpvalue? prev_upvalue;
-    DloxUpvalue? upvalue = open_upvalues;
+    DloxUpvalue? upvalue = _open_upvalues;
     while (upvalue != null && upvalue.location! > localIdx) {
       prev_upvalue = upvalue;
       upvalue = upvalue.next;
@@ -425,7 +929,7 @@ class DloxVM {
       final created_upvalue = DloxUpvalue(localIdx, DloxNil);
       created_upvalue.next = upvalue;
       if (prev_upvalue == null) {
-        open_upvalues = created_upvalue;
+        _open_upvalues = created_upvalue;
       } else {
         prev_upvalue.next = created_upvalue;
       }
@@ -433,70 +937,70 @@ class DloxVM {
     }
   }
 
-  void close_upvalues(
+  void _close_upvalues(
     final int? lastIdx,
   ) {
-    while (open_upvalues != null && open_upvalues!.location! >= lastIdx!) {
-      final upvalue = open_upvalues!;
-      upvalue.closed = stack[upvalue.location!];
+    while (_open_upvalues != null && _open_upvalues!.location! >= lastIdx!) {
+      final upvalue = _open_upvalues!;
+      upvalue.closed = _stack[upvalue.location!];
       upvalue.location = null;
-      open_upvalues = upvalue.next;
+      _open_upvalues = upvalue.next;
     }
   }
 
-  void define_method(
+  void _define_method(
     final String? name,
   ) {
-    final method = peek(0);
-    final klass = (peek(1) as DloxClass?)!;
+    final method = _peek(0);
+    final klass = (_peek(1) as DloxClass?)!;
     klass.methods.set_val(name, method);
-    pop();
+    _pop();
   }
 
-  bool is_falsey(
+  bool _is_falsey(
     final Object? value,
   ) {
     return value == DloxNil || (value is bool && !value);
   }
 
-  int read_byte(
+  int _read_byte(
     final _Dlox_VMCallFrame frame,
   ) {
     return frame.chunk.code[frame.ip++].key;
   }
 
-  int read_short(
+  int _read_short(
     final _Dlox_VMCallFrame frame,
   ) {
     frame.ip += 2;
     return frame.chunk.code[frame.ip - 2].key << 8 | frame.chunk.code[frame.ip - 1].key;
   }
 
-  Object? read_constant(
+  Object? _read_constant(
     final _Dlox_VMCallFrame frame,
   ) {
-    return frame.closure.function.chunk.heap.constant_at(read_byte(frame));
+    return frame.closure.function.chunk.heap.constant_at(_read_byte(frame));
   }
 
-  String? read_string(
+  String? _read_string(
     final _Dlox_VMCallFrame frame,
   ) {
-    return read_constant(frame) as String?;
+    return _read_constant(frame) as String?;
   }
 
-  bool assert_number(
+  bool _assert_number(
     final dynamic a,
     final dynamic b,
   ) {
     if (!(a is double) || !(b is double)) {
-      runtime_error('Operands must be numbers');
+      _runtime_error('Operands must be numbers');
       return false;
     } else {
       return true;
     }
   }
 
-  int? check_index(
+  int? _check_index(
     final int length,
     Object? idxObj, {
     final bool fromStart = true,
@@ -511,14 +1015,14 @@ class DloxVM {
       }
     }
     if (idxObj is! double) {
-      runtime_error('Index must be a number');
+      _runtime_error('Index must be a number');
       return null;
     } else {
       int idx = idxObj.toInt();
       if (idx < 0) idx = length + idx;
       final max = fromStart ? length - 1 : length;
       if (idx < 0 || idx > max) {
-        runtime_error('Index $idx out of bounds [0, $max]');
+        _runtime_error('Index $idx out of bounds [0, $max]');
         return null;
       } else {
         return idx;
@@ -526,523 +1030,16 @@ class DloxVM {
     }
   }
 
-  bool get done {
-    return frame_count == 0;
-  }
-
-  DloxVMInterpreterResult run() {
-    DloxVMInterpreterResult? res;
-    do {
-      res = step_batch();
-    } while (res == null);
-    return res;
-  }
-
-  DloxVMInterpreterResult? step_batch({
-    final int batch_count = _DLOXVM_BATCH_COUNT,
-  }) {
-    // Setup
-    if (frame_count == 0) {
-      add_error(
-        msg: 'No call frame',
-        line: line,
-        link: null,
-      );
-      return result;
-    } else {
-      _Dlox_VMCallFrame? frame = frames[frame_count - 1];
-      final step_count_limit = step_count + batch_count;
-      // Main loop
-      while (step_count++ < step_count_limit) {
-        // Setup current line
-        final frame_line = frame!.chunk.code[frame.ip].value;
-        // Step code helper
-        if (step_code) {
-          final instruction = frame.chunk.code[frame.ip].key;
-          final op = DloxOpCode.values[instruction];
-          // Pause execution on demand
-          if (frame_line != line && has_op) {
-            // Newline detected, return
-            // No need to set line to frameLine thanks to hasOp
-            has_op = false;
-            return get_result(
-              line: line,
-            );
-          }
-          // A line is worth stopping on if it has one of those opts
-          has_op |= op != DloxOpCode.POP && op != DloxOpCode.LOOP && op != DloxOpCode.JUMP;
-        }
-        // Update line
-        final prevLine = line;
-        line = frame_line;
-        // Trace execution if needed
-        if (trace_execution) {
-          trace_debug.stdwrite('          ');
-          for (int k = 0; k < stack_top; k++) {
-            trace_debug.stdwrite('[ ');
-            trace_debug.print_value(stack[k]);
-            trace_debug.stdwrite(' ]');
-          }
-          trace_debug.stdwrite('\n');
-          trace_debug.disassemble_instruction(prevLine, frame.closure.function.chunk, frame.ip);
-        }
-        final instruction = read_byte(frame);
-        switch (DloxOpCode.values[instruction]) {
-          case DloxOpCode.CONSTANT:
-            final constant = read_constant(frame);
-            push(constant);
-            break;
-          case DloxOpCode.NIL:
-            push(DloxNil);
-            break;
-          case DloxOpCode.TRUE:
-            push(true);
-            break;
-          case DloxOpCode.FALSE:
-            push(false);
-            break;
-          case DloxOpCode.POP:
-            pop();
-            break;
-          case DloxOpCode.GET_LOCAL:
-            final slot = read_byte(frame);
-            push(stack[frame.slots_idx + slot]);
-            break;
-          case DloxOpCode.SET_LOCAL:
-            final slot = read_byte(frame);
-            stack[frame.slots_idx + slot] = peek(0);
-            break;
-          case DloxOpCode.GET_GLOBAL:
-            final name = read_string(frame)!;
-            final value = globals.get_val(name);
-            if (value == null) {
-              return runtime_error("Undefined variable '" + name + "'");
-            } else {
-              push(value);
-              break;
-            }
-          case DloxOpCode.DEFINE_GLOBAL:
-            final name = read_string(frame);
-            globals.set_val(name, peek(0));
-            pop();
-            break;
-          case DloxOpCode.SET_GLOBAL:
-            final name = read_string(frame)!;
-            if (globals.set_val(name, peek(0))) {
-              globals.delete(name); // [delete]
-              return runtime_error("Undefined variable '" + name + "'");
-            } else {
-              break;
-            }
-          case DloxOpCode.GET_UPVALUE:
-            final slot = read_byte(frame);
-            final upvalue = frame.closure.upvalues[slot]!;
-            push(
-              () {
-                if (upvalue.location != null) {
-                  return stack[upvalue.location!];
-                } else {
-                  return upvalue.closed;
-                }
-              }(),
-            );
-            break;
-          case DloxOpCode.SET_UPVALUE:
-            final slot = read_byte(frame);
-            final upvalue = frame.closure.upvalues[slot]!;
-            if (upvalue.location != null) {
-              stack[upvalue.location!] = peek(0);
-            } else {
-              upvalue.closed = peek(0);
-            }
-            break;
-          case DloxOpCode.GET_PROPERTY:
-            Object? value;
-            if (peek(0) is DloxInstance) {
-              final instance = (peek(0) as DloxInstance?)!;
-              final name = read_string(frame);
-              value = instance.fields.get_val(name);
-              if (value == null && !bind_method(instance.klass!, name)) {
-                return result;
-              }
-            } else if (peek(0) is ObjNativeClass) {
-              final instance = (peek(0) as ObjNativeClass?)!;
-              final name = read_string(frame);
-              try {
-                value = instance.get_val(name);
-              } on _NativeError catch (e) {
-                return runtime_error(e.error);
-              }
-            } else {
-              return runtime_error('Only instances have properties');
-            }
-            if (value != null) {
-              pop(); // Instance.
-              push(value);
-            }
-            break;
-          case DloxOpCode.SET_PROPERTY:
-            if (peek(1) is DloxInstance) {
-              final DloxInstance instance = (peek(1) as DloxInstance?)!;
-              instance.fields.set_val(read_string(frame), peek(0));
-            } else if (peek(1) is ObjNativeClass) {
-              final ObjNativeClass instance = (peek(1) as ObjNativeClass?)!;
-              instance.set_val(read_string(frame), peek(0));
-            } else {
-              return runtime_error('Only instances have fields');
-            }
-            final value = pop();
-            pop();
-            push(value);
-            break;
-          case DloxOpCode.GET_SUPER:
-            final name = read_string(frame);
-            final DloxClass superclass = (pop() as DloxClass?)!;
-            if (!bind_method(superclass, name)) {
-              return result;
-            }
-            break;
-          case DloxOpCode.EQUAL:
-            final b = pop();
-            final a = pop();
-            push(_values_equal(a, b));
-            break;
-          // Optimisation create greater_or_equal
-          case DloxOpCode.GREATER:
-            final b = pop();
-            final a = pop();
-            if (a is String && b is String) {
-              push(a.compareTo(b));
-            } else if (a is double && b is double) {
-              push(a > b);
-            } else {
-              return runtime_error('Operands must be numbers or strings');
-            }
-            break;
-          // Optimisation create less_or_equal
-          case DloxOpCode.LESS:
-            final b = pop();
-            final a = pop();
-            if (a is String && b is String) {
-              push(b.compareTo(a));
-            } else if (a is double && b is double) {
-              push(a < b);
-            } else {
-              return runtime_error('Operands must be numbers or strings');
-            }
-            break;
-          case DloxOpCode.ADD:
-            final b = pop();
-            final a = pop();
-            if ((a is double) && (b is double)) {
-              push(a + b);
-            } else if ((a is String) && (b is String)) {
-              push(a + b);
-            } else if ((a is List) && (b is List)) {
-              push(a + b);
-            } else if ((a is Map) && (b is Map)) {
-              final res = <dynamic, dynamic>{};
-              res.addAll(a);
-              res.addAll(b);
-              push(res);
-            } else if ((a is String) || (b is String)) {
-              push(value_to_string(a, quoteEmpty: false)! + value_to_string(b, quoteEmpty: false)!);
-            } else {
-              return runtime_error('Operands must numbers, strings, lists or maps');
-            }
-            break;
-          case DloxOpCode.SUBTRACT:
-            final b = pop();
-            final a = pop();
-            if (!assert_number(a, b)) return result;
-            push((a as double?)! - (b as double?)!);
-            break;
-          case DloxOpCode.MULTIPLY:
-            final b = pop();
-            final a = pop();
-            if (!assert_number(a, b)) return result;
-            push((a as double?)! * (b as double?)!);
-            break;
-          case DloxOpCode.DIVIDE:
-            final b = pop();
-            final a = pop();
-            if (!assert_number(a, b)) return result;
-            push((a as double?)! / (b as double?)!);
-            break;
-          case DloxOpCode.POW:
-            final b = pop();
-            final a = pop();
-            if (!assert_number(a, b)) return result;
-            push(pow((a as double?)!, (b as double?)!));
-            break;
-          case DloxOpCode.MOD:
-            final b = pop();
-            final a = pop();
-            if (!assert_number(a, b)) return result;
-            push((a as double?)! % (b as double?)!);
-            break;
-          case DloxOpCode.NOT:
-            push(is_falsey(pop()));
-            break;
-          case DloxOpCode.NEGATE:
-            if (!(peek(0) is double)) {
-              return runtime_error('Operand must be a number');
-            } else {
-              push(-(pop() as double?)!);
-              break;
-            }
-          case DloxOpCode.PRINT:
-            final val = value_to_string(pop());
-            stdout.stdwriteln(val ?? "");
-            break;
-          case DloxOpCode.JUMP:
-            final offset = read_short(frame);
-            frame.ip += offset;
-            break;
-          case DloxOpCode.JUMP_IF_FALSE:
-            final offset = read_short(frame);
-            if (is_falsey(peek(0))) frame.ip += offset;
-            break;
-          case DloxOpCode.LOOP:
-            final offset = read_short(frame);
-            frame.ip -= offset;
-            break;
-          case DloxOpCode.CALL:
-            final arg_count = read_byte(frame);
-            if (!call_value(peek(arg_count), arg_count)) {
-              return result;
-            } else {
-              frame = frames[frame_count - 1];
-              break;
-            }
-          case DloxOpCode.INVOKE:
-            final method = read_string(frame);
-            final arg_count = read_byte(frame);
-            if (!invoke(method, arg_count)) {
-              return result;
-            } else {
-              frame = frames[frame_count - 1];
-              break;
-            }
-          case DloxOpCode.SUPER_INVOKE:
-            final method = read_string(frame);
-            final arg_count = read_byte(frame);
-            final superclass = (pop() as DloxClass?)!;
-            if (!invoke_from_class(superclass, method, arg_count)) {
-              return result;
-            } else {
-              frame = frames[frame_count - 1];
-              break;
-            }
-          case DloxOpCode.CLOSURE:
-            final function = (read_constant(frame) as DloxFunction?)!;
-            final closure = DloxClosure(
-              function: function,
-              upvalues: List<DloxUpvalue?>.filled(function.chunk.upvalue_count, null),
-            );
-            push(closure);
-            for (int i = 0; i < closure.upvalues.length; i++) {
-              final isLocal = read_byte(frame);
-              final index = read_byte(frame);
-              if (isLocal == 1) {
-                closure.upvalues[i] = capture_upvalue(frame.slots_idx + index);
-              } else {
-                closure.upvalues[i] = frame.closure.upvalues[index];
-              }
-            }
-            break;
-          case DloxOpCode.CLOSE_UPVALUE:
-            close_upvalues(stack_top - 1);
-            pop();
-            break;
-          case DloxOpCode.RETURN:
-            final res = pop();
-            close_upvalues(frame.slots_idx);
-            frame_count--;
-            // ignore: invariant_booleans
-            if (frame_count == 0) {
-              pop();
-              return get_result(
-                line: line,
-                return_value: res,
-              );
-            } else {
-              stack_top = frame.slots_idx;
-              push(res);
-              frame = frames[frame_count - 1];
-              break;
-            }
-          case DloxOpCode.CLASS:
-            push(DloxClass(read_string(frame)));
-            break;
-          case DloxOpCode.INHERIT:
-            final sup = peek(1);
-            if (!(sup is DloxClass)) {
-              return runtime_error('Superclass must be a class');
-            } else {
-              final DloxClass superclass = sup;
-              final DloxClass subclass = (peek(0) as DloxClass?)!;
-              subclass.methods.add_all(superclass.methods);
-              pop(); // Subclass.
-              break;
-            }
-          case DloxOpCode.METHOD:
-            define_method(read_string(frame));
-            break;
-          case DloxOpCode.LIST_INIT:
-            final valCount = read_byte(frame);
-            final arr = <dynamic>[];
-            for (int k = 0; k < valCount; k++) {
-              arr.add(peek(valCount - k - 1));
-            }
-            stack_top -= valCount;
-            push(arr);
-            break;
-          case DloxOpCode.LIST_INIT_RANGE:
-            if (!(peek(0) is double) || !(peek(1) is double)) {
-              return runtime_error('List initializer bounds must be number');
-            } else {
-              final start = (peek(1) as double?)!;
-              final end = (peek(0) as double?)!;
-              if (end - start == double.infinity) {
-                return runtime_error('Invalid list initializer');
-              } else {
-                final arr = <dynamic>[];
-                for (double k = start; k < end; k++) {
-                  arr.add(k);
-                }
-                stack_top -= 2;
-                push(arr);
-                break;
-              }
-            }
-          case DloxOpCode.MAP_INIT:
-            final valCount = read_byte(frame);
-            final map = <dynamic, dynamic>{};
-            for (int k = 0; k < valCount; k++) {
-              map[peek((valCount - k - 1) * 2 + 1)] = peek((valCount - k - 1) * 2);
-            }
-            stack_top -= 2 * valCount;
-            push(map);
-            break;
-          case DloxOpCode.CONTAINER_GET:
-            final idxObj = pop();
-            final container = pop();
-            if (container is List) {
-              final idx = check_index(container.length, idxObj);
-              if (idx == null) return result;
-              push(container[idx]);
-            } else if (container is Map) {
-              push(container[idxObj]);
-            } else if (container is String) {
-              final idx = check_index(container.length, idxObj);
-              if (idx == null) return result;
-              push(container[idx]);
-            } else {
-              return runtime_error(
-                'Indexing targets must be Strings, Lists or Maps',
-              );
-            }
-            break;
-          case DloxOpCode.CONTAINER_SET:
-            final val = pop();
-            final idx_obj = pop();
-            final container = pop();
-            if (container is List) {
-              final idx = check_index(container.length, idx_obj);
-              if (idx == null) return result;
-              container[idx] = val;
-            } else if (container is Map) {
-              container[idx_obj] = val;
-            } else {
-              return runtime_error('Indexing targets must be Lists or Maps');
-            }
-            push(val);
-            break;
-          case DloxOpCode.CONTAINER_GET_RANGE:
-            Object? bIdx = pop();
-            Object? aIdx = pop();
-            final container = pop();
-            int length = 0;
-            if (container is List) {
-              length = container.length;
-            } else if (container is String) {
-              length = container.length;
-            } else {
-              return runtime_error('Range indexing targets must be Lists or Strings');
-            }
-            aIdx = check_index(length, aIdx);
-            bIdx = check_index(length, bIdx, fromStart: false);
-            if (aIdx == null || bIdx == null) return result;
-            if (container is List) {
-              push(container.sublist(aIdx as int, bIdx as int?));
-            } else if (container is String) {
-              push(container.substring(aIdx as int, bIdx as int?));
-            }
-            break;
-          case DloxOpCode.CONTAINER_ITERATE:
-            // Init stack indexes
-            final valIdx = read_byte(frame);
-            final keyIdx = valIdx + 1;
-            final idxIdx = valIdx + 2;
-            final iterableIdx = valIdx + 3;
-            final containerIdx = valIdx + 4;
-            // Retrieve data
-            Object? idxObj = stack[frame.slots_idx + idxIdx];
-            // Initialize
-            if (idxObj == DloxNil) {
-              final container = stack[frame.slots_idx + containerIdx];
-              idxObj = 0.0;
-              if (container is String) {
-                stack[frame.slots_idx + iterableIdx] = container.split('');
-              } else if (container is List) {
-                stack[frame.slots_idx + iterableIdx] = container;
-              } else if (container is Map) {
-                stack[frame.slots_idx + iterableIdx] = container.entries.toList();
-              } else {
-                return runtime_error('Iterable must be Strings, Lists or Maps');
-              }
-              // Pop container from stack
-              pop();
-            }
-            // Iterate
-            final idx = (idxObj as double?)!;
-            final iterable = (stack[frame.slots_idx + iterableIdx] as List?)!;
-            if (idx >= iterable.length) {
-              // Return early
-              push(false);
-              break;
-            } else {
-              // Populate key & value
-              final dynamic item = iterable[idx.toInt()];
-              if (item is MapEntry) {
-                stack[frame.slots_idx + keyIdx] = item.key;
-                stack[frame.slots_idx + valIdx] = item.value;
-              } else {
-                stack[frame.slots_idx + keyIdx] = idx;
-                stack[frame.slots_idx + valIdx] = item;
-              }
-              // Increment index
-              stack[frame.slots_idx + idxIdx] = idx + 1;
-              push(true);
-              break;
-            }
-        }
-      }
-      return null;
-    }
-  }
-
-  DloxVMInterpreterResult runtime_error(
+  DloxVMInterpreterResult _runtime_error(
     final String format,
   ) {
-    RuntimeError error = add_error(
+    RuntimeError error = _add_error(
       msg: format,
       link: null,
-      line: line,
+      line: _line,
     );
-    for (int i = frame_count - 2; i >= 0; i--) {
-      final frame = frames[i]!;
+    for (int i = _frame_count - 2; i >= 0; i--) {
+      final frame = _frames[i]!;
       final function = frame.closure.function;
       // frame.ip is sitting on the next instruction
       final line = function.chunk.code[frame.ip - 1].value;
@@ -1054,14 +1051,15 @@ class DloxVM {
         }
       }();
       final msg = 'during $fun execution';
-      error = add_error(
+      error = _add_error(
         msg: msg,
         line: line,
         link: error,
       );
     }
-    return result;
+    return _result;
   }
+  // endregion
 }
 
 class DloxVMInterpreterResult {

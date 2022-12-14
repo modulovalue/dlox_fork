@@ -1,5 +1,6 @@
 import 'model.dart';
 
+// region all
 class DloxDatasetAll with DloxDatasetInternal {
   const DloxDatasetAll();
 
@@ -7,67 +8,71 @@ class DloxDatasetAll with DloxDatasetInternal {
   String get name => "all";
 
   @override
-  List<DloxDataset> get children => const [
-        set_assignment,
-        set_block,
-        set_bool,
-        set_call,
-        set_class,
-        set_closure,
-        set_comments,
-        set_constructor,
-        set_field,
-        set_for,
-        set_function,
-        set_if,
-        set_inheritance,
-        set_logical_operator,
-        set_method,
-        set_misc,
-        set_nil,
-        set_number,
-        set_operator,
-        set_print,
-        set_regression,
-        set_return,
-        set_string,
-        set_super,
-        set_this,
-        set_variable,
-        set_while,
-      ];
+  List<DloxDataset> get children {
+    return const [
+      set_assignment,
+      set_block,
+      set_bool,
+      set_call,
+      set_class,
+      set_closure,
+      set_comments,
+      set_constructor,
+      set_field,
+      set_for,
+      set_function,
+      set_if,
+      set_inheritance,
+      set_logical_operator,
+      set_method,
+      set_misc,
+      set_nil,
+      set_number,
+      set_operator,
+      set_print,
+      set_regression,
+      set_return,
+      set_string,
+      set_super,
+      set_this,
+      set_variable,
+      set_while,
+    ];
+  }
 
-  static const set_assignment = DloxDataset_assignment();
-  static const set_block = DloxDataset_block();
-  static const set_bool = DloxDataset_bool();
-  static const set_call = DloxDataset_call();
-  static const set_class = DloxDataset_class();
-  static const set_closure = DloxDataset_closure();
-  static const set_comments = DloxDataset_comments();
-  static const set_constructor = DloxDataset_constructor();
-  static const set_field = DloxDataset_field();
-  static const set_for = DloxDataset_for();
-  static const set_function = DloxDataset_function();
-  static const set_if = DloxDataset_if();
-  static const set_inheritance = DloxDataset_inheritance();
-  static const set_logical_operator = DloxDataset_logical_operator();
-  static const set_method = DloxDataset_method();
-  static const set_misc = DloxDataset_misc();
-  static const set_nil = DloxDataset_nil();
-  static const set_number = DloxDataset_number();
-  static const set_operator = DloxDataset_operator();
-  static const set_print = DloxDataset_print();
-  static const set_regression = DloxDataset_regression();
-  static const set_return = DloxDataset_return();
-  static const set_string = DloxDataset_string();
-  static const set_super = DloxDataset_super();
-  static const set_this = DloxDataset_this();
-  static const set_variable = DloxDataset_variable();
-  static const set_while = DloxDataset_while();
+  static const set_assignment = _DloxDataset_assignment();
+  static const set_block = _DloxDataset_block();
+  static const set_bool = _DloxDataset_bool();
+  static const set_call = _DloxDataset_call();
+  static const set_class = _DloxDataset_class();
+  static const set_closure = _DloxDataset_closure();
+  static const set_comments = _DloxDataset_comments();
+  static const set_constructor = _DloxDataset_constructor();
+  static const set_field = _DloxDataset_field();
+  static const set_for = _DloxDataset_for();
+  static const set_function = _DloxDataset_function();
+  static const set_if = _DloxDataset_if();
+  static const set_inheritance = _DloxDataset_inheritance();
+  static const set_logical_operator = _DloxDataset_logical_operator();
+  static const set_method = _DloxDataset_method();
+  static const set_misc = _DloxDataset_misc();
+  static const set_nil = _DloxDataset_nil();
+  static const set_number = _DloxDataset_number();
+  static const set_operator = _DloxDataset_operator();
+  static const set_print = _DloxDataset_print();
+  static const set_regression = _DloxDataset_regression();
+  static const set_return = _DloxDataset_return();
+  static const set_string = _DloxDataset_string();
+  static const set_super = _DloxDataset_super();
+  static const set_this = _DloxDataset_this();
+  static const set_variable = _DloxDataset_variable();
+  static const set_while = _DloxDataset_while();
 }
+// endregion
 
-class DloxDataset_closure with DloxDatasetInternal {
-  const DloxDataset_closure();
+// region data
+class _DloxDataset_closure with DloxDatasetInternal {
+  const _DloxDataset_closure();
 
   @override
   String get name => "closure";
@@ -347,8 +352,8 @@ g();
       ];
 }
 
-class DloxDataset_misc with DloxDatasetInternal {
-  const DloxDataset_misc();
+class _DloxDataset_misc with DloxDatasetInternal {
+  const _DloxDataset_misc();
 
   @override
   String get name => "misc";
@@ -406,8 +411,8 @@ print (2 * (6 - (2 + 2))); // expect: 4
       ];
 }
 
-class DloxDataset_comments with DloxDatasetInternal {
-  const DloxDataset_comments();
+class _DloxDataset_comments with DloxDatasetInternal {
+  const _DloxDataset_comments();
 
   @override
   String get name => "comments";
@@ -448,8 +453,8 @@ print "ok"; // expect: ok
       ];
 }
 
-class DloxDataset_variable with DloxDatasetInternal {
-  const DloxDataset_variable();
+class _DloxDataset_variable with DloxDatasetInternal {
+  const _DloxDataset_variable();
 
   @override
   String get name => "variable";
@@ -669,8 +674,8 @@ print a; // expect: 2
       ];
 }
 
-class DloxDataset_nil with DloxDatasetInternal {
-  const DloxDataset_nil();
+class _DloxDataset_nil with DloxDatasetInternal {
+  const _DloxDataset_nil();
 
   @override
   String get name => "nil";
@@ -686,8 +691,8 @@ print nil; // expect: nil
       ];
 }
 
-class DloxDataset_if with DloxDatasetInternal {
-  const DloxDataset_if();
+class _DloxDataset_if with DloxDatasetInternal {
+  const _DloxDataset_if();
 
   @override
   String get name => "if";
@@ -785,8 +790,8 @@ if (a = true) print a; // expect: true
       ];
 }
 
-class DloxDataset_assignment with DloxDatasetInternal {
-  const DloxDataset_assignment();
+class _DloxDataset_assignment with DloxDatasetInternal {
+  const _DloxDataset_assignment();
 
   @override
   String get name => "assignment";
@@ -888,8 +893,8 @@ unknown = "what"; // Runtime error: Undefined variable 'unknown'.
       ];
 }
 
-class DloxDataset_return with DloxDatasetInternal {
-  const DloxDataset_return();
+class _DloxDataset_return with DloxDatasetInternal {
+  const _DloxDataset_return();
 
   @override
   String get name => "return";
@@ -964,8 +969,8 @@ print f(); // expect: ok
       ];
 }
 
-class DloxDataset_function with DloxDatasetInternal {
-  const DloxDataset_function();
+class _DloxDataset_function with DloxDatasetInternal {
+  const _DloxDataset_function();
 
   @override
   String get name => "function";
@@ -1638,8 +1643,8 @@ f(1, 2, 3, 4); // Runtime error: Expected 2 arguments but got 4.
       ];
 }
 
-class DloxDataset_field with DloxDatasetInternal {
-  const DloxDataset_field();
+class _DloxDataset_field with DloxDatasetInternal {
+  const _DloxDataset_field();
 
   @override
   String get name => "field";
@@ -2031,8 +2036,8 @@ foo.bar; // Runtime error: Undefined property 'bar'.
       ];
 }
 
-class DloxDataset_print with DloxDatasetInternal {
-  const DloxDataset_print();
+class _DloxDataset_print with DloxDatasetInternal {
+  const _DloxDataset_print();
 
   @override
   String get name => "print";
@@ -2049,8 +2054,8 @@ print; // Error at ';': Expect expression.
       ];
 }
 
-class DloxDataset_number with DloxDatasetInternal {
-  const DloxDataset_number();
+class _DloxDataset_number with DloxDatasetInternal {
+  const _DloxDataset_number();
 
   @override
   String get name => "number";
@@ -2105,8 +2110,8 @@ print -0.001;  // expect: -0.001
       ];
 }
 
-class DloxDataset_call with DloxDatasetInternal {
-  const DloxDataset_call();
+class _DloxDataset_call with DloxDatasetInternal {
+  const _DloxDataset_call();
 
   @override
   String get name => "call";
@@ -2149,8 +2154,8 @@ foo(); // Runtime error: Can only call functions and classes.
       ];
 }
 
-class DloxDataset_logical_operator with DloxDatasetInternal {
-  const DloxDataset_logical_operator();
+class _DloxDataset_logical_operator with DloxDatasetInternal {
+  const _DloxDataset_logical_operator();
 
   @override
   String get name => "logical_operator";
@@ -2234,8 +2239,8 @@ print "s" or "ok"; // expect: s
       ];
 }
 
-class DloxDataset_inheritance with DloxDatasetInternal {
-  const DloxDataset_inheritance();
+class _DloxDataset_inheritance with DloxDatasetInternal {
+  const _DloxDataset_inheritance();
 
   @override
   String get name => "inheritance";
@@ -2357,8 +2362,8 @@ b.test(); // expect: value
       ];
 }
 
-class DloxDataset_super with DloxDatasetInternal {
-  const DloxDataset_super();
+class _DloxDataset_super with DloxDatasetInternal {
+  const _DloxDataset_super();
 
   @override
   String get name => "super";
@@ -2734,8 +2739,8 @@ derived.method(); // expect: Base.method()
       ];
 }
 
-class DloxDataset_bool with DloxDatasetInternal {
-  const DloxDataset_bool();
+class _DloxDataset_bool with DloxDatasetInternal {
+  const _DloxDataset_bool();
 
   @override
   String get name => "bool";
@@ -2781,8 +2786,8 @@ print !!true;   // expect: true
       ];
 }
 
-class DloxDataset_for with DloxDatasetInternal {
-  const DloxDataset_for();
+class _DloxDataset_for with DloxDatasetInternal {
+  const _DloxDataset_for();
 
   @override
   String get name => "for";
@@ -2976,8 +2981,8 @@ for (;;) fun foo() {} // Error at 'fun': Expect expression.
       ];
 }
 
-class DloxDataset_class with DloxDatasetInternal {
-  const DloxDataset_class();
+class _DloxDataset_class with DloxDatasetInternal {
+  const _DloxDataset_class();
 
   @override
   String get name => "class";
@@ -3075,8 +3080,8 @@ class Foo < Foo {} // Error at 'Foo': A class can't inherit from itself.
       ];
 }
 
-class DloxDataset_this with DloxDatasetInternal {
-  const DloxDataset_this();
+class _DloxDataset_this with DloxDatasetInternal {
+  const _DloxDataset_this();
 
   @override
   String get name => "this";
@@ -3178,8 +3183,8 @@ Outer().method();
       ];
 }
 
-class DloxDataset_string with DloxDatasetInternal {
-  const DloxDataset_string();
+class _DloxDataset_string with DloxDatasetInternal {
+  const _DloxDataset_string();
 
   @override
   String get name => "string";
@@ -3222,8 +3227,8 @@ print a;
       ];
 }
 
-class DloxDataset_regression with DloxDatasetInternal {
-  const DloxDataset_regression();
+class _DloxDataset_regression with DloxDatasetInternal {
+  const _DloxDataset_regression();
 
   @override
   String get name => "regression";
@@ -3270,8 +3275,8 @@ callCaller();
       ];
 }
 
-class DloxDataset_while with DloxDatasetInternal {
-  const DloxDataset_while();
+class _DloxDataset_while with DloxDatasetInternal {
+  const _DloxDataset_while();
 
   @override
   String get name => "while";
@@ -3381,8 +3386,8 @@ while (true) fun foo() {} // Error at 'fun': Expect expression.
       ];
 }
 
-class DloxDataset_method with DloxDatasetInternal {
-  const DloxDataset_method();
+class _DloxDataset_method with DloxDatasetInternal {
+  const _DloxDataset_method();
 
   @override
   String get name => "method";
@@ -4011,8 +4016,8 @@ Foo().method(1, 2, 3, 4); // Runtime error: Expected 2 arguments but got 4.
       ];
 }
 
-class DloxDataset_operator with DloxDatasetInternal {
-  const DloxDataset_operator();
+class _DloxDataset_operator with DloxDatasetInternal {
+  const _DloxDataset_operator();
 
   @override
   String get name => "operator";
@@ -4302,8 +4307,8 @@ print !Bar();    // expect: false
       ];
 }
 
-class DloxDataset_constructor with DloxDatasetInternal {
-  const DloxDataset_constructor();
+class _DloxDataset_constructor with DloxDatasetInternal {
+  const _DloxDataset_constructor();
 
   @override
   String get name => "constructor";
@@ -4461,8 +4466,8 @@ print foo; // expect: Foo instance
       ];
 }
 
-class DloxDataset_block with DloxDatasetInternal {
-  const DloxDataset_block();
+class _DloxDataset_block with DloxDatasetInternal {
+  const _DloxDataset_block();
 
   @override
   String get name => "block";
@@ -4496,3 +4501,4 @@ print a; // expect: outer
         ),
       ];
 }
+// endregion

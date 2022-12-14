@@ -172,7 +172,6 @@ class Debug {
   ) {
     stdwrite(value_to_string(value));
   }
-
   // endregion
 
   // region disassembler
@@ -396,7 +395,7 @@ class Debug {
         throw Exception('Unknown opcode $instruction');
     }
   }
-// endregion
+  // endregion
 }
 
 String? value_to_string(

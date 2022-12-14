@@ -10,4 +10,4 @@ dependencies:
 
 dev_dependencies:
   extra_pedantic: ^2.0.0
-  test:
+  test: ^1.21.4

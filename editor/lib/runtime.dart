@@ -178,61 +178,69 @@ class Runtime extends ChangeNotifier {
   bool step() {
     if (!_init_code() || done) {
       return false;
+    } else {
+      vm.step_code = true;
+      interpreter_result = vm.step_batch();
+      _on_interpreter_result();
+      return true;
     }
-    vm.step_code = true;
-    interpreter_result = vm.step_batch();
-    _on_interpreter_result();
-    return true;
   }
 
   Future<bool> run() async {
     if (!_init_code()) {
       return false;
+    } else {
+      stop_flag = false;
+      running = true;
+      notifyListeners();
+      vm.step_code = false;
+      final time_started_ms = DateTime
+          .now()
+          .millisecondsSinceEpoch;
+      while (!done && !stop_flag) {
+        interpreter_result = vm.step_batch(
+          // Cope with expensive tracing
+          batch_count: vm.trace_execution ? 100 : 500000,
+        );
+        // Update Ips counter
+        final dt = DateTime
+            .now()
+            .millisecondsSinceEpoch - time_started_ms;
+        average_ips = vm.step_count / max(dt, 1) * 1000;
+        _on_interpreter_result();
+        await Future<void>.delayed(
+          const Duration(
+            seconds: 0,
+          ),
+        );
+      }
+      stop_flag = false;
+      running = false;
+      notifyListeners();
+      return true;
     }
-    stop_flag = false;
-    running = true;
-    notifyListeners();
-    vm.step_code = false;
-    final time_started_ms = DateTime.now().millisecondsSinceEpoch;
-    while (!done && !stop_flag) {
-      interpreter_result = vm.step_batch(
-        // Cope with expensive tracing
-        batch_count: vm.trace_execution ? 100 : 500000,
-      );
-      // Update Ips counter
-      final dt = DateTime.now().millisecondsSinceEpoch - time_started_ms;
-      average_ips = vm.step_count / max(dt, 1) * 1000;
-      _on_interpreter_result();
-      await Future<void>.delayed(
-        const Duration(
-          seconds: 0,
-        ),
-      );
-    }
-    stop_flag = false;
-    running = false;
-    notifyListeners();
-    return true;
   }
 
   void reset() {
     if (compiler_function == null) {
-      return;
+        // Do nothing.
+    } else {
+      if (compiler_errors.isNotEmpty) {
+        // Do nothing.
+      } else {
+        // Clear output
+        clear_output();
+        // Set interpreter
+        vm.set_function(
+          compiler_function!,
+          compiler_errors,
+          const DLoxVMFunctionParams(),
+        );
+        interpreter_result = null;
+        on_interpreter_result(interpreter_result);
+        notifyListeners();
+      }
     }
-    if (compiler_errors.isNotEmpty) {
-      return;
-    }
-    // Clear output
-    clear_output();
-    // Set interpreter
-    vm.set_function(
-      compiler_function!,
-      compiler_errors,
-      const DLoxVMFunctionParams(),
-    );
-    interpreter_result = null;
-    on_interpreter_result(interpreter_result);
-    notifyListeners();
   }
 
   void stop() {
