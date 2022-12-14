@@ -1,23 +1,44 @@
-abstract class Token {
-  TokenType get type;
+class TokenAug {
+  // TODO have width here.
+  // TODO it seems that there are synthetic tokens where this is -1, handle them cleanly.
+  final int line;
 
-  Loc get loc;
+  // TODO this will be derivable from the widths. remove it once that is the case.
+  final String lexeme;
 
-  String get lexeme;
+  const TokenAug({
+    required final this.line,
+    required final this.lexeme,
+  });
+
+  @override
+  bool operator ==(
+    final Object o,
+  ) {
+    return o is TokenAug && o.line == line && o.lexeme == lexeme;
+  }
+
+  @override
+  int get hashCode {
+    return line.hashCode ^ lexeme.hashCode;
+  }
 }
 
-class TokenImpl implements Token {
+abstract class Token<A> {
+  TokenType get type;
+
+  A get aug;
+}
+
+class TokenImpl<A> implements Token<A> {
   @override
   final TokenType type;
   @override
-  final String lexeme;
-  @override
-  final Loc loc;
+  final A aug;
 
   const TokenImpl({
     required final this.type,
-    required final this.lexeme,
-    required final this.loc,
+    required final this.aug,
   });
 
   @override
@@ -114,11 +135,11 @@ class TokenImpl implements Token {
       case TokenType.EOF:
         return '';
       case TokenType.NUMBER:
-        return lexeme;
+        return (aug as TokenAug).lexeme;
       case TokenType.STRING:
-        return lexeme;
+        return (aug as TokenAug).lexeme;
       case TokenType.IDENTIFIER:
-        return lexeme;
+        return (aug as TokenAug).lexeme;
     }
   }
 
@@ -126,12 +147,12 @@ class TokenImpl implements Token {
   bool operator ==(
     final Object o,
   ) {
-    return o is Token && o.type == type && o.loc == loc && o.lexeme == lexeme;
+    return o is Token && o.type == type && o.aug == aug;
   }
 
   @override
   int get hashCode {
-    return type.hashCode ^ loc.hashCode ^ lexeme.hashCode;
+    return type.hashCode ^ aug.hashCode;
   }
 }
 
@@ -184,17 +205,4 @@ enum TokenType {
   ERROR,
   COMMENT,
   EOF,
-}
-
-abstract class Loc {
-  int get line;
-}
-
-class LocImpl implements Loc {
-  @override
-  final int line;
-
-  const LocImpl({
-    required final this.line,
-  });
 }

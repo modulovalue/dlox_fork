@@ -2,7 +2,7 @@ import '../arrows/fundamental/ast_to_objfunction.dart' show ast_to_objfunction;
 import '../arrows/fundamental/objfunction_to_output.dart' show DloxVM;
 import '../domains/ast.dart' show CompilationUnit;
 import '../domains/errors.dart' show Debug;
-import '../domains/tokens.dart' show Token;
+import '../domains/tokens.dart' show Token, TokenAug;
 import 'dataset.dart' show DloxDatasetAll;
 import 'model.dart' show DloxDatasetInternal, DloxDatasetLeafImpl;
 
@@ -63,7 +63,7 @@ abstract class DLoxTestSuite {
                   ).toSet();
                   final err_list1 = debug.errors
                       .map(
-                        (final e) => '${e.token.loc.line}:${e.msg}',
+                        (final e) => '${e.token.aug.line}:${e.msg}',
                       )
                       .toSet();
                   wrapper.run_test("test", (final test_context) {
@@ -168,9 +168,9 @@ abstract class DLoxTestSuite {
 }
 
 class DLoxTestSuiteDependencies {
-  final List<Token> Function(String) code_to_tokens;
-  final MapEntry<CompilationUnit, int> Function(
-    List<Token> tokens,
+  final List<Token<TokenAug>> Function(String) code_to_tokens;
+  final MapEntry<CompilationUnit<int>, int> Function(
+    List<Token<TokenAug>> tokens,
     Debug debug,
   ) tokens_to_ast;
 

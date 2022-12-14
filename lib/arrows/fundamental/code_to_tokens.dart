@@ -1,12 +1,12 @@
 import '../../domains/tokens.dart';
 
-List<Token> source_to_tokens({
+List<Token<TokenAug>> source_to_tokens({
   required final String source,
 }) {
   final lexer = _Lexer._(
     source: source,
   );
-  final tokens = <Token>[];
+  final tokens = <Token<TokenAug>>[];
   for (;;) {
     tokens.add(lexer.scan_token());
     if (tokens.last.type == TokenType.EOF) {
@@ -21,16 +21,14 @@ class _Lexer {
   String source;
   int start;
   int current;
-  Loc loc;
+  int line;
   bool line_is_comment;
 
   _Lexer._({
     required final this.source,
   })  : start = 0,
         current = 0,
-        loc = const LocImpl(
-          line: 0,
-        ),
+        line = 0,
         line_is_comment = false;
 
   static bool is_digit(
@@ -56,9 +54,7 @@ class _Lexer {
   }
 
   void new_line() {
-    loc = LocImpl(
-      line: loc.line + 1,
-    );
+    line = line + 1;
     line_is_comment = false;
   }
 
@@ -106,7 +102,7 @@ class _Lexer {
     }
   }
 
-  Token make_token(
+  Token<TokenAug> make_token(
     final TokenType type,
   ) {
     String str = source.substring(start, current);
@@ -115,22 +111,17 @@ class _Lexer {
     }
     final token = TokenImpl(
       type: type,
-      loc: loc,
-      lexeme: str,
-    );
-    loc = LocImpl(
-      line: loc.line,
+      aug: TokenAug(line: line, lexeme: str),
     );
     return token;
   }
 
-  Token error_token(
+  Token<TokenAug> error_token(
     final String message,
   ) {
     return TokenImpl(
       type: TokenType.ERROR,
-      loc: loc,
-      lexeme: message,
+      aug: TokenAug(line: line, lexeme: message),
     );
   }
 
@@ -229,14 +220,14 @@ class _Lexer {
     return TokenType.IDENTIFIER;
   }
 
-  Token identifier() {
+  Token<TokenAug> identifier() {
     while (is_alpha(peek) || is_digit(peek)) {
       advance();
     }
     return make_token(identifier_type());
   }
 
-  Token number() {
+  Token<TokenAug> number() {
     while (is_digit(peek)) {
       advance();
     }
@@ -251,7 +242,7 @@ class _Lexer {
     return make_token(TokenType.NUMBER);
   }
 
-  Token string() {
+  Token<TokenAug> string() {
     while (peek != '"' && !is_at_end) {
       if (peek == '\n') {
         new_line();
@@ -267,7 +258,7 @@ class _Lexer {
     }
   }
 
-  Token comment() {
+  Token<TokenAug> comment() {
     for (;;) {
       if (peek != "\n") {
         if (is_at_end) {
@@ -282,7 +273,7 @@ class _Lexer {
     return make_token(TokenType.COMMENT);
   }
 
-  Token scan_token() {
+  Token<TokenAug> scan_token() {
     skip_whitespace();
     start = current;
     if (is_at_end) {

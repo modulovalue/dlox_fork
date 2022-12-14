@@ -1,8 +1,8 @@
 import 'tokens.dart';
 
 // region compilation unit
-class CompilationUnit {
-  final List<Declaration> decls;
+class CompilationUnit<I> {
+  final List<Declaration<I>> decls;
 
   const CompilationUnit({
     required this.decls,
@@ -11,80 +11,80 @@ class CompilationUnit {
 // endregion
 
 // region decl
-abstract class Declaration {
+abstract class Declaration<I> {
   Z match<Z>({
-    required final Z Function(DeclarationClazz) clazz,
-    required final Z Function(DeclarationFun) fun,
-    required final Z Function(DeclarationVari) vari,
-    required final Z Function(DeclarationStmt) stmt,
+    required final Z Function(DeclarationClazz<I>) clazz,
+    required final Z Function(DeclarationFun<I>) fun,
+    required final Z Function(DeclarationVari<I>) vari,
+    required final Z Function(DeclarationStmt<I>) stmt,
   });
 }
 
-class DeclarationClazz implements Declaration {
-  final Token name;
-  final Token? superclass_name;
-  final List<Method> functions;
-  final int line;
+class DeclarationClazz<I> implements Declaration<I> {
+  final Token<TokenAug> name;
+  final Token<TokenAug>? superclass_name;
+  final List<Method<I>> functions;
+  final I aug;
 
   const DeclarationClazz({
     required final this.name,
     required final this.superclass_name,
     required final this.functions,
-    required final this.line,
+    required final this.aug,
   });
 
   @override
   Z match<Z>({
-    required final Z Function(DeclarationClazz) clazz,
-    required final Z Function(DeclarationFun) fun,
-    required final Z Function(DeclarationVari) vari,
-    required final Z Function(DeclarationStmt) stmt,
+    required final Z Function(DeclarationClazz<I>) clazz,
+    required final Z Function(DeclarationFun<I>) fun,
+    required final Z Function(DeclarationVari<I>) vari,
+    required final Z Function(DeclarationStmt<I>) stmt,
   }) =>
       clazz(this);
 }
 
-class DeclarationFun implements Declaration {
-  final Functiony block;
-  final Token name;
-  final int line;
+class DeclarationFun<I> implements Declaration<I> {
+  final Functiony<I> block;
+  final Token<TokenAug> name;
+  final I aug;
 
   const DeclarationFun({
     required this.block,
     required this.name,
-    required this.line,
+    required this.aug,
   });
 
   @override
   Z match<Z>({
-    required final Z Function(DeclarationClazz) clazz,
-    required final Z Function(DeclarationFun) fun,
-    required final Z Function(DeclarationVari) vari,
-    required final Z Function(DeclarationStmt) stmt,
+    required final Z Function(DeclarationClazz<I>) clazz,
+    required final Z Function(DeclarationFun<I>) fun,
+    required final Z Function(DeclarationVari<I>) vari,
+    required final Z Function(DeclarationStmt<I>) stmt,
   }) =>
       fun(this);
 }
 
-class DeclarationVari implements Declaration {
-  final List<MapEntry<Token, Expr>> exprs;
-  final int line;
+class DeclarationVari<I> implements Declaration<I> {
+  final List<MapEntry<Token<TokenAug>, Expr<I>>> exprs;
+  final I aug;
 
   const DeclarationVari({
     required final this.exprs,
-    required final this.line,
+    required final this.aug,
   });
 
   @override
   Z match<Z>({
-    required final Z Function(DeclarationClazz) clazz,
-    required final Z Function(DeclarationFun) fun,
-    required final Z Function(DeclarationVari) vari,
-    required final Z Function(DeclarationStmt) stmt,
+    required final Z Function(DeclarationClazz<I>) clazz,
+    required final Z Function(DeclarationFun<I>) fun,
+    required final Z Function(DeclarationVari<I>) vari,
+    required final Z Function(DeclarationStmt<I>) stmt,
   }) =>
       vari(this);
 }
 
-class DeclarationStmt implements Declaration {
-  final Stmt stmt;
+class DeclarationStmt<I> implements Declaration<I> {
+  final Stmt<I> stmt;
 
   const DeclarationStmt({
     required this.stmt,
@@ -92,34 +92,34 @@ class DeclarationStmt implements Declaration {
 
   @override
   Z match<Z>({
-    required final Z Function(DeclarationClazz) clazz,
-    required final Z Function(DeclarationFun) fun,
-    required final Z Function(DeclarationVari) vari,
-    required final Z Function(DeclarationStmt) stmt,
+    required final Z Function(DeclarationClazz<I>) clazz,
+    required final Z Function(DeclarationFun<I>) fun,
+    required final Z Function(DeclarationVari<I>) vari,
+    required final Z Function(DeclarationStmt<I>) stmt,
   }) =>
       stmt(this);
 }
 // endregion
 
 // region method
-class Method {
-  final Token name;
-  final Functiony block;
-  final int line;
+class Method<I> {
+  final Token<TokenAug> name;
+  final Functiony<I> block;
+  final I aug;
 
   const Method({
     required final this.name,
     required final this.block,
-    required final this.line,
+    required final this.aug,
   });
 }
 // endregion
 
 // region block
-class Functiony {
+class Functiony<I> {
   final String name;
-  final List<Token> args;
-  final List<Declaration> decls;
+  final List<Token<TokenAug>> args;
+  final List<Declaration<I>> decls;
 
   const Functiony({
     required final this.name,
@@ -130,49 +130,49 @@ class Functiony {
 // endregion
 
 // region stmt
-abstract class Stmt {
+abstract class Stmt<I> {
   Z match<Z>({
-    required final Z Function(StmtOutput) output,
-    required final Z Function(StmtLoop) loop,
-    required final Z Function(StmtLoop2) loop2,
-    required final Z Function(StmtConditional) conditional,
-    required final Z Function(StmtRet) ret,
-    required final Z Function(StmtWhil) whil,
-    required final Z Function(StmtBlock) block,
-    required final Z Function(StmtExpr) expr,
+    required final Z Function(StmtOutput<I>) output,
+    required final Z Function(StmtLoop<I>) loop,
+    required final Z Function(StmtLoop2<I>) loop2,
+    required final Z Function(StmtConditional<I>) conditional,
+    required final Z Function(StmtRet<I>) ret,
+    required final Z Function(StmtWhil<I>) whil,
+    required final Z Function(StmtBlock<I>) block,
+    required final Z Function(StmtExpr<I>) expr,
   });
 }
 
-class StmtOutput implements Stmt {
-  final Expr expr;
-  final int line;
+class StmtOutput<I> implements Stmt<I> {
+  final Expr<I> expr;
+  final I aug;
 
   const StmtOutput({
     required final this.expr,
-    required final this.line,
+    required final this.aug,
   });
 
   @override
   Z match<Z>({
-    required final Z Function(StmtOutput) output,
-    required final Z Function(StmtLoop) loop,
-    required final Z Function(StmtLoop2) loop2,
-    required final Z Function(StmtConditional) conditional,
-    required final Z Function(StmtRet) ret,
-    required final Z Function(StmtWhil) whil,
-    required final Z Function(StmtBlock) block,
-    required final Z Function(StmtExpr) expr,
+    required final Z Function(StmtOutput<I>) output,
+    required final Z Function(StmtLoop<I>) loop,
+    required final Z Function(StmtLoop2<I>) loop2,
+    required final Z Function(StmtConditional<I>) conditional,
+    required final Z Function(StmtRet<I>) ret,
+    required final Z Function(StmtWhil<I>) whil,
+    required final Z Function(StmtBlock<I>) block,
+    required final Z Function(StmtExpr<I>) expr,
   }) => output(this);
 }
 
-class StmtLoop implements Stmt {
-  final LoopLeft? left;
-  final Expr? center;
-  final Expr? right;
-  final Stmt body;
-  final Token right_kw;
-  final Token end_kw;
-  final int line;
+class StmtLoop<I> implements Stmt<I> {
+  final LoopLeft<I>? left;
+  final Expr<I>? center;
+  final Expr<I>? right;
+  final Stmt<I> body;
+  final Token<TokenAug> right_kw;
+  final Token<TokenAug> end_kw;
+  final I aug;
 
   const StmtLoop({
     required final this.left,
@@ -181,29 +181,29 @@ class StmtLoop implements Stmt {
     required final this.right_kw,
     required final this.body,
     required final this.end_kw,
-    required final this.line,
+    required final this.aug,
   });
 
   @override
   Z match<Z>({
-    required final Z Function(StmtOutput) output,
-    required final Z Function(StmtLoop) loop,
-    required final Z Function(StmtLoop2) loop2,
-    required final Z Function(StmtConditional) conditional,
-    required final Z Function(StmtRet) ret,
-    required final Z Function(StmtWhil) whil,
-    required final Z Function(StmtBlock) block,
-    required final Z Function(StmtExpr) expr,
+    required final Z Function(StmtOutput<I>) output,
+    required final Z Function(StmtLoop<I>) loop,
+    required final Z Function(StmtLoop2<I>) loop2,
+    required final Z Function(StmtConditional<I>) conditional,
+    required final Z Function(StmtRet<I>) ret,
+    required final Z Function(StmtWhil<I>) whil,
+    required final Z Function(StmtBlock<I>) block,
+    required final Z Function(StmtExpr<I>) expr,
   }) => loop(this);
 }
 
-class StmtLoop2 implements Stmt {
-  final Token key_name;
-  final Token? value_name;
-  final Expr center;
-  final Stmt body;
-  final Token exit_token;
-  final int line;
+class StmtLoop2<I> implements Stmt<I> {
+  final Token<TokenAug> key_name;
+  final Token<TokenAug>? value_name;
+  final Expr<I> center;
+  final Stmt<I> body;
+  final Token<TokenAug> exit_token;
+  final I aug;
 
   const StmtLoop2({
     required final this.center,
@@ -211,29 +211,29 @@ class StmtLoop2 implements Stmt {
     required final this.value_name,
     required final this.body,
     required final this.exit_token,
-    required final this.line,
+    required final this.aug,
   });
 
   @override
   Z match<Z>({
-    required final Z Function(StmtOutput) output,
-    required final Z Function(StmtLoop) loop,
-    required final Z Function(StmtLoop2) loop2,
-    required final Z Function(StmtConditional) conditional,
-    required final Z Function(StmtRet) ret,
-    required final Z Function(StmtWhil) whil,
-    required final Z Function(StmtBlock) block,
-    required final Z Function(StmtExpr) expr,
+    required final Z Function(StmtOutput<I>) output,
+    required final Z Function(StmtLoop<I>) loop,
+    required final Z Function(StmtLoop2<I>) loop2,
+    required final Z Function(StmtConditional<I>) conditional,
+    required final Z Function(StmtRet<I>) ret,
+    required final Z Function(StmtWhil<I>) whil,
+    required final Z Function(StmtBlock<I>) block,
+    required final Z Function(StmtExpr<I>) expr,
   }) => loop2(this);
 }
 
-class StmtConditional implements Stmt {
-  final Expr expr;
-  final Stmt stmt;
-  final Stmt? other;
-  final Token if_kw;
-  final Token else_kw;
-  final int line;
+class StmtConditional<I> implements Stmt<I> {
+  final Expr<I> expr;
+  final Stmt<I> stmt;
+  final Stmt<I>? other;
+  final Token<TokenAug> if_kw;
+  final Token<TokenAug> else_kw;
+  final I aug;
 
   const StmtConditional({
     required final this.expr,
@@ -241,127 +241,127 @@ class StmtConditional implements Stmt {
     required final this.other,
     required final this.if_kw,
     required final this.else_kw,
-    required final this.line,
+    required final this.aug,
   });
 
   @override
   Z match<Z>({
-    required final Z Function(StmtOutput) output,
-    required final Z Function(StmtLoop) loop,
-    required final Z Function(StmtLoop2) loop2,
-    required final Z Function(StmtConditional) conditional,
-    required final Z Function(StmtRet) ret,
-    required final Z Function(StmtWhil) whil,
-    required final Z Function(StmtBlock) block,
-    required final Z Function(StmtExpr) expr,
+    required final Z Function(StmtOutput<I>) output,
+    required final Z Function(StmtLoop<I>) loop,
+    required final Z Function(StmtLoop2<I>) loop2,
+    required final Z Function(StmtConditional<I>) conditional,
+    required final Z Function(StmtRet<I>) ret,
+    required final Z Function(StmtWhil<I>) whil,
+    required final Z Function(StmtBlock<I>) block,
+    required final Z Function(StmtExpr<I>) expr,
   }) => conditional(this);
 }
 
-class StmtRet implements Stmt {
-  final Token kw;
-  final Expr? expr;
-  final int line;
+class StmtRet<I> implements Stmt<I> {
+  final Token<TokenAug> kw;
+  final Expr<I>? expr;
+  final I aug;
 
   const StmtRet({
     required final this.kw,
     required final this.expr,
-    required final this.line,
+    required final this.aug,
   });
 
   @override
   Z match<Z>({
-    required final Z Function(StmtOutput) output,
-    required final Z Function(StmtLoop) loop,
-    required final Z Function(StmtLoop2) loop2,
-    required final Z Function(StmtConditional) conditional,
-    required final Z Function(StmtRet) ret,
-    required final Z Function(StmtWhil) whil,
-    required final Z Function(StmtBlock) block,
-    required final Z Function(StmtExpr) expr,
+    required final Z Function(StmtOutput<I>) output,
+    required final Z Function(StmtLoop<I>) loop,
+    required final Z Function(StmtLoop2<I>) loop2,
+    required final Z Function(StmtConditional<I>) conditional,
+    required final Z Function(StmtRet<I>) ret,
+    required final Z Function(StmtWhil<I>) whil,
+    required final Z Function(StmtBlock<I>) block,
+    required final Z Function(StmtExpr<I>) expr,
   }) => ret(this);
 }
 
-class StmtWhil implements Stmt {
-  final Expr expr;
-  final Stmt stmt;
-  final Token exit_kw;
-  final int line;
+class StmtWhil<I> implements Stmt<I> {
+  final Expr<I> expr;
+  final Stmt<I> stmt;
+  final Token<TokenAug> exit_kw;
+  final I aug;
 
   const StmtWhil({
     required final this.expr,
     required final this.stmt,
     required final this.exit_kw,
-    required final this.line,
+    required final this.aug,
   });
 
   @override
   Z match<Z>({
-    required final Z Function(StmtOutput) output,
-    required final Z Function(StmtLoop) loop,
-    required final Z Function(StmtLoop2) loop2,
-    required final Z Function(StmtConditional) conditional,
-    required final Z Function(StmtRet) ret,
-    required final Z Function(StmtWhil) whil,
-    required final Z Function(StmtBlock) block,
-    required final Z Function(StmtExpr) expr,
+    required final Z Function(StmtOutput<I>) output,
+    required final Z Function(StmtLoop<I>) loop,
+    required final Z Function(StmtLoop2<I>) loop2,
+    required final Z Function(StmtConditional<I>) conditional,
+    required final Z Function(StmtRet<I>) ret,
+    required final Z Function(StmtWhil<I>) whil,
+    required final Z Function(StmtBlock<I>) block,
+    required final Z Function(StmtExpr<I>) expr,
   }) => whil(this);
 }
 
-class StmtBlock implements Stmt {
-  final List<Declaration> block;
-  final int line;
+class StmtBlock<I> implements Stmt<I> {
+  final List<Declaration<I>> block;
+  final I aug;
 
   const StmtBlock({
     required final this.block,
-    required final this.line,
+    required final this.aug,
   });
 
   @override
   Z match<Z>({
-    required final Z Function(StmtOutput) output,
-    required final Z Function(StmtLoop) loop,
-    required final Z Function(StmtLoop2) loop2,
-    required final Z Function(StmtConditional) conditional,
-    required final Z Function(StmtRet) ret,
-    required final Z Function(StmtWhil) whil,
-    required final Z Function(StmtBlock) block,
-    required final Z Function(StmtExpr) expr,
+    required final Z Function(StmtOutput<I>) output,
+    required final Z Function(StmtLoop<I>) loop,
+    required final Z Function(StmtLoop2<I>) loop2,
+    required final Z Function(StmtConditional<I>) conditional,
+    required final Z Function(StmtRet<I>) ret,
+    required final Z Function(StmtWhil<I>) whil,
+    required final Z Function(StmtBlock<I>) block,
+    required final Z Function(StmtExpr<I>) expr,
   }) => block(this);
 }
 
-class StmtExpr implements Stmt {
-  final Expr expr;
-  final int line;
+class StmtExpr<I> implements Stmt<I> {
+  final Expr<I> expr;
+  final I aug;
 
   const StmtExpr({
     required this.expr,
-    required this.line,
+    required this.aug,
   });
 
   @override
   Z match<Z>({
-    required final Z Function(StmtOutput) output,
-    required final Z Function(StmtLoop) loop,
-    required final Z Function(StmtLoop2) loop2,
-    required final Z Function(StmtConditional) conditional,
-    required final Z Function(StmtRet) ret,
-    required final Z Function(StmtWhil) whil,
-    required final Z Function(StmtBlock) block,
-    required final Z Function(StmtExpr) expr,
+    required final Z Function(StmtOutput<I>) output,
+    required final Z Function(StmtLoop<I>) loop,
+    required final Z Function(StmtLoop2<I>) loop2,
+    required final Z Function(StmtConditional<I>) conditional,
+    required final Z Function(StmtRet<I>) ret,
+    required final Z Function(StmtWhil<I>) whil,
+    required final Z Function(StmtBlock<I>) block,
+    required final Z Function(StmtExpr<I>) expr,
   }) => expr(this);
 }
 // endregion
 
 // region loop left
-abstract class LoopLeft {
+abstract class LoopLeft<I> {
   R match<R>({
-    required final R Function(LoopLeftVari) vari,
-    required final R Function(LoopLeftExpr) expr,
+    required final R Function(LoopLeftVari<I>) vari,
+    required final R Function(LoopLeftExpr<I>) expr,
   });
 }
 
-class LoopLeftVari implements LoopLeft {
-  final DeclarationVari decl;
+class LoopLeftVari<I> implements LoopLeft<I> {
+  final DeclarationVari<I> decl;
 
   const LoopLeftVari({
     required final this.decl,
@@ -369,13 +369,13 @@ class LoopLeftVari implements LoopLeft {
 
   @override
   R match<R>({
-    required final R Function(LoopLeftVari) vari,
-    required final R Function(LoopLeftExpr) expr,
+    required final R Function(LoopLeftVari<I>) vari,
+    required final R Function(LoopLeftExpr<I>) expr,
   }) => vari(this);
 }
 
-class LoopLeftExpr implements LoopLeft {
-  final Expr expr;
+class LoopLeftExpr<I> implements LoopLeft<I> {
+  final Expr<I> expr;
 
   const LoopLeftExpr({
     required final this.expr,
@@ -383,389 +383,389 @@ class LoopLeftExpr implements LoopLeft {
 
   @override
   R match<R>({
-    required final R Function(LoopLeftVari) vari,
-    required final R Function(LoopLeftExpr) expr,
+    required final R Function(LoopLeftVari<I>) vari,
+    required final R Function(LoopLeftExpr<I>) expr,
   }) => expr(this);
 }
 // endregion
 
 // region expr
-abstract class Expr {}
+abstract class Expr<I> {}
 
-class ExprMap implements Expr {
-  final List<MapEntry<Expr, Expr>> entries;
-  final int line;
+class ExprMap<I> implements Expr<I> {
+  final List<MapEntry<Expr<I>, Expr<I>>> entries;
+  final I aug;
 
   const ExprMap({
     required final this.entries,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprCall implements Expr {
-  final List<Expr> args;
-  final int line;
+class ExprCall<I> implements Expr<I> {
+  final List<Expr<I>> args;
+  final I aug;
 
   const ExprCall({
     required final this.args,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprInvoke implements Expr {
-  final List<Expr> args;
-  final Token name;
-  final int line;
+class ExprInvoke<I> implements Expr<I> {
+  final List<Expr<I>> args;
+  final Token<TokenAug> name;
+  final I aug;
 
   const ExprInvoke({
     required final this.args,
     required final this.name,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprGet implements Expr {
-  final Token name;
-  final int line;
+class ExprGet<I> implements Expr<I> {
+  final Token<TokenAug> name;
+  final I aug;
 
   const ExprGet({
     required final this.name,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprSet implements Expr {
-  final Expr arg;
-  final Token name;
-  final int line;
+class ExprSet<I> implements Expr<I> {
+  final Expr<I> arg;
+  final Token<TokenAug> name;
+  final I aug;
 
   const ExprSet({
     required final this.arg,
     required final this.name,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprSet2 implements Expr {
-  final Expr arg;
-  final Token name;
-  final int line;
+class ExprSet2<I> implements Expr<I> {
+  final Expr<I> arg;
+  final Token<TokenAug> name;
+  final I aug;
 
   const ExprSet2({
     required final this.arg,
     required final this.name,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprGetSet2 implements Expr {
-  final Token name;
-  final Getset? child;
-  final int line;
+class ExprGetSet2<I> implements Expr<I> {
+  final Token<TokenAug> name;
+  final Getset<I>? child;
+  final I aug;
 
   const ExprGetSet2({
     required final this.child,
     required final this.name,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprList implements Expr {
-  final List<Expr> values;
+class ExprList<I> implements Expr<I> {
+  final List<Expr<I>> values;
   final int val_count;
-  final int line;
+  final I aug;
 
   const ExprList({
     required final this.values,
     required final this.val_count,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprNil implements Expr {
-  final int line;
+class ExprNil<I> implements Expr<I> {
+  final I aug;
 
   const ExprNil({
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprString implements Expr {
-  final Token token;
-  final int line;
+class ExprString<I> implements Expr<I> {
+  final Token<TokenAug> token;
+  final I aug;
 
   const ExprString({
     required final this.token,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprNumber implements Expr {
-  final Token value;
-  final int line;
+class ExprNumber<I> implements Expr<I> {
+  final Token<TokenAug> value;
+  final I aug;
 
   const ExprNumber({
     required final this.value,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprObject implements Expr {
-  final Token token;
-  final int line;
+class ExprObject<I> implements Expr<I> {
+  final Token<TokenAug> token;
+  final I aug;
 
   const ExprObject({
     required final this.token,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprListGetter implements Expr {
-  final Expr? first;
-  final Expr? second;
-  final Token first_token;
-  final Token second_token;
-  final int line;
+class ExprListGetter<I> implements Expr<I> {
+  final Expr<I>? first;
+  final Expr<I>? second;
+  final Token<TokenAug> first_token;
+  final Token<TokenAug> second_token;
+  final I aug;
 
   const ExprListGetter({
     required final this.first,
     required final this.first_token,
     required final this.second,
     required final this.second_token,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprListSetter implements Expr {
-  final Expr? first;
-  final Expr? second;
-  final Token token;
-  final int line;
+class ExprListSetter<I> implements Expr<I> {
+  final Expr<I>? first;
+  final Expr<I>? second;
+  final Token<TokenAug> token;
+  final I aug;
 
   const ExprListSetter({
     required final this.first,
     required final this.second,
     required final this.token,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprSuperaccess implements Expr {
-  final Token kw;
-  final List<Expr>? args;
-  final int line;
+class ExprSuperaccess<I> implements Expr<I> {
+  final Token<TokenAug> kw;
+  final List<Expr<I>>? args;
+  final I aug;
 
   const ExprSuperaccess({
     required final this.kw,
     required final this.args,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprTruth implements Expr {
-  final int line;
+class ExprTruth<I> implements Expr<I> {
+  final I aug;
 
   const ExprTruth({
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprFalsity implements Expr {
-  final int line;
+class ExprFalsity<I> implements Expr<I> {
+  final I aug;
 
   const ExprFalsity({
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprSelf implements Expr {
-  final Token previous;
-  final int line;
+class ExprSelf<I> implements Expr<I> {
+  final Token<TokenAug> previous;
+  final I aug;
 
   const ExprSelf({
     required final this.previous,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprComposite implements Expr {
-  final List<Expr> exprs;
+class ExprComposite<I> implements Expr<I> {
+  final List<Expr<I>> exprs;
 
   const ExprComposite({
     required final this.exprs,
   });
 }
 
-class ExprExpected implements Expr {
+class ExprExpected<I> implements Expr<I> {
   const ExprExpected();
 }
 
-class ExprNegated implements Expr {
-  final Expr child;
-  final int line;
+class ExprNegated<I> implements Expr<I> {
+  final Expr<I> child;
+  final I aug;
 
   const ExprNegated({
     required final this.child,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprNot implements Expr {
-  final Expr child;
-  final int line;
+class ExprNot<I> implements Expr<I> {
+  final Expr<I> child;
+  final I aug;
 
   const ExprNot({
     required final this.child,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprMinus implements Expr {
-  final Expr child;
-  final int line;
+class ExprMinus<I> implements Expr<I> {
+  final Expr<I> child;
+  final I aug;
 
   const ExprMinus({
     required final this.child,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprPlus implements Expr {
-  final Expr child;
-  final int line;
+class ExprPlus<I> implements Expr<I> {
+  final Expr<I> child;
+  final I aug;
 
   const ExprPlus({
     required final this.child,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprSlash implements Expr {
-  final Expr child;
-  final int line;
+class ExprSlash<I> implements Expr<I> {
+  final Expr<I> child;
+  final I aug;
 
   const ExprSlash({
     required final this.child,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprStar implements Expr {
-  final Expr child;
-  final int line;
+class ExprStar<I> implements Expr<I> {
+  final Expr<I> child;
+  final I aug;
 
   const ExprStar({
     required final this.child,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprAnd implements Expr {
-  final Token token;
-  final Expr child;
-  final int line;
+class ExprAnd<I> implements Expr<I> {
+  final Token<TokenAug> token;
+  final Expr<I> child;
+  final I aug;
 
   const ExprAnd({
     required final this.token,
     required final this.child,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprOr implements Expr {
-  final Token token;
-  final Expr child;
-  final int line;
+class ExprOr<I> implements Expr<I> {
+  final Token<TokenAug> token;
+  final Expr<I> child;
+  final I aug;
 
   const ExprOr({
     required final this.token,
     required final this.child,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprG implements Expr {
-  final Expr child;
-  final int line;
+class ExprG<I> implements Expr<I> {
+  final Expr<I> child;
+  final I aug;
 
   const ExprG({
     required final this.child,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprGeq implements Expr {
-  final Expr child;
-  final int line;
+class ExprGeq<I> implements Expr<I> {
+  final Expr<I> child;
+  final I aug;
 
   const ExprGeq({
     required final this.child,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprL implements Expr {
-  final Expr child;
-  final int line;
+class ExprL<I> implements Expr<I> {
+  final Expr<I> child;
+  final I aug;
 
   const ExprL({
     required final this.child,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprLeq implements Expr {
-  final Expr child;
-  final int line;
+class ExprLeq<I> implements Expr<I> {
+  final Expr<I> child;
+  final I aug;
 
   const ExprLeq({
     required final this.child,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprPow implements Expr {
-  final Expr child;
-  final int line;
+class ExprPow<I> implements Expr<I> {
+  final Expr<I> child;
+  final I aug;
 
   const ExprPow({
     required final this.child,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprModulo implements Expr {
-  final Expr child;
-  final int line;
+class ExprModulo<I> implements Expr<I> {
+  final Expr<I> child;
+  final I aug;
 
   const ExprModulo({
     required final this.child,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprNeq implements Expr {
-  final Expr child;
-  final int line;
+class ExprNeq<I> implements Expr<I> {
+  final Expr<I> child;
+  final I aug;
 
   const ExprNeq({
     required final this.child,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class ExprEq implements Expr {
-  final Expr child;
-  final int line;
+class ExprEq<I> implements Expr<I> {
+  final Expr<I> child;
+  final I aug;
 
   const ExprEq({
     required final this.child,
-    required final this.line,
+    required final this.aug,
   });
 }
 
-class Getset {
-  final Expr child;
+class Getset<I> {
+  final Expr<I> child;
   final GetsetType type;
 
   const Getset({
@@ -783,83 +783,83 @@ enum GetsetType {
   modeq,
 }
 
-Z match_expr<Z>({
-  required final Expr expr,
-  required final Z Function(ExprMap) map,
-  required final Z Function(ExprCall) call,
-  required final Z Function(ExprInvoke) invoke,
-  required final Z Function(ExprGet) get,
-  required final Z Function(ExprSet) set,
-  required final Z Function(ExprSet2) set2,
-  required final Z Function(ExprGetSet2) getset2,
-  required final Z Function(ExprList) list,
-  required final Z Function(ExprNil) nil,
-  required final Z Function(ExprString) string,
-  required final Z Function(ExprNumber) number,
-  required final Z Function(ExprObject) object,
-  required final Z Function(ExprListGetter) listgetter,
-  required final Z Function(ExprListSetter) listsetter,
-  required final Z Function(ExprSuperaccess) superaccess,
-  required final Z Function(ExprTruth) truth,
-  required final Z Function(ExprFalsity) falsity,
-  required final Z Function(ExprSelf) self,
-  required final Z Function(ExprComposite) composite,
-  required final Z Function(ExprExpected) expected,
-  required final Z Function(ExprNegated) negated,
-  required final Z Function(ExprNot) not,
-  required final Z Function(ExprMinus) minus,
-  required final Z Function(ExprPlus) plus,
-  required final Z Function(ExprSlash) slash,
-  required final Z Function(ExprStar) star,
-  required final Z Function(ExprAnd) and,
-  required final Z Function(ExprOr) or,
-  required final Z Function(ExprG) g,
-  required final Z Function(ExprGeq) geq,
-  required final Z Function(ExprL) l,
-  required final Z Function(ExprLeq) leq,
-  required final Z Function(ExprPow) pow,
-  required final Z Function(ExprModulo) modulo,
-  required final Z Function(ExprNeq) neq,
-  required final Z Function(ExprEq) eq,
+Z match_expr<Z, I>({
+  required final Expr<I> expr,
+  required final Z Function(ExprMap<I>) map,
+  required final Z Function(ExprCall<I>) call,
+  required final Z Function(ExprInvoke<I>) invoke,
+  required final Z Function(ExprGet<I>) get,
+  required final Z Function(ExprSet<I>) set,
+  required final Z Function(ExprSet2<I>) set2,
+  required final Z Function(ExprGetSet2<I>) getset2,
+  required final Z Function(ExprList<I>) list,
+  required final Z Function(ExprNil<I>) nil,
+  required final Z Function(ExprString<I>) string,
+  required final Z Function(ExprNumber<I>) number,
+  required final Z Function(ExprObject<I>) object,
+  required final Z Function(ExprListGetter<I>) listgetter,
+  required final Z Function(ExprListSetter<I>) listsetter,
+  required final Z Function(ExprSuperaccess<I>) superaccess,
+  required final Z Function(ExprTruth<I>) truth,
+  required final Z Function(ExprFalsity<I>) falsity,
+  required final Z Function(ExprSelf<I>) self,
+  required final Z Function(ExprComposite<I>) composite,
+  required final Z Function(ExprExpected<I>) expected,
+  required final Z Function(ExprNegated<I>) negated,
+  required final Z Function(ExprNot<I>) not,
+  required final Z Function(ExprMinus<I>) minus,
+  required final Z Function(ExprPlus<I>) plus,
+  required final Z Function(ExprSlash<I>) slash,
+  required final Z Function(ExprStar<I>) star,
+  required final Z Function(ExprAnd<I>) and,
+  required final Z Function(ExprOr<I>) or,
+  required final Z Function(ExprG<I>) g,
+  required final Z Function(ExprGeq<I>) geq,
+  required final Z Function(ExprL<I>) l,
+  required final Z Function(ExprLeq<I>) leq,
+  required final Z Function(ExprPow<I>) pow,
+  required final Z Function(ExprModulo<I>) modulo,
+  required final Z Function(ExprNeq<I>) neq,
+  required final Z Function(ExprEq<I>) eq,
 }) {
-  if (expr is ExprMap) return map(expr);
-  if (expr is ExprMap) return map(expr);
-  if (expr is ExprMap) return map(expr);
-  if (expr is ExprCall) return call(expr);
-  if (expr is ExprInvoke) return invoke(expr);
-  if (expr is ExprGet) return get(expr);
-  if (expr is ExprSet) return set(expr);
-  if (expr is ExprSet2) return set2(expr);
-  if (expr is ExprGetSet2) return getset2(expr);
-  if (expr is ExprList) return list(expr);
-  if (expr is ExprNil) return nil(expr);
-  if (expr is ExprString) return string(expr);
-  if (expr is ExprNumber) return number(expr);
-  if (expr is ExprObject) return object(expr);
-  if (expr is ExprListGetter) return listgetter(expr);
-  if (expr is ExprListSetter) return listsetter(expr);
-  if (expr is ExprSuperaccess) return superaccess(expr);
-  if (expr is ExprTruth) return truth(expr);
-  if (expr is ExprFalsity) return falsity(expr);
-  if (expr is ExprSelf) return self(expr);
-  if (expr is ExprComposite) return composite(expr);
-  if (expr is ExprExpected) return expected(expr);
-  if (expr is ExprNegated) return negated(expr);
-  if (expr is ExprNot) return not(expr);
-  if (expr is ExprMinus) return minus(expr);
-  if (expr is ExprPlus) return plus(expr);
-  if (expr is ExprSlash) return slash(expr);
-  if (expr is ExprStar) return star(expr);
-  if (expr is ExprAnd) return and(expr);
-  if (expr is ExprOr) return or(expr);
-  if (expr is ExprG) return g(expr);
-  if (expr is ExprGeq) return geq(expr);
-  if (expr is ExprL) return l(expr);
-  if (expr is ExprLeq) return leq(expr);
-  if (expr is ExprPow) return pow(expr);
-  if (expr is ExprModulo) return modulo(expr);
-  if (expr is ExprNeq) return neq(expr);
-  if (expr is ExprEq) return eq(expr);
+  if (expr is ExprMap<I>) return map(expr);
+  if (expr is ExprMap<I>) return map(expr);
+  if (expr is ExprMap<I>) return map(expr);
+  if (expr is ExprCall<I>) return call(expr);
+  if (expr is ExprInvoke<I>) return invoke(expr);
+  if (expr is ExprGet<I>) return get(expr);
+  if (expr is ExprSet<I>) return set(expr);
+  if (expr is ExprSet2<I>) return set2(expr);
+  if (expr is ExprGetSet2<I>) return getset2(expr);
+  if (expr is ExprList<I>) return list(expr);
+  if (expr is ExprNil<I>) return nil(expr);
+  if (expr is ExprString<I>) return string(expr);
+  if (expr is ExprNumber<I>) return number(expr);
+  if (expr is ExprObject<I>) return object(expr);
+  if (expr is ExprListGetter<I>) return listgetter(expr);
+  if (expr is ExprListSetter<I>) return listsetter(expr);
+  if (expr is ExprSuperaccess<I>) return superaccess(expr);
+  if (expr is ExprTruth<I>) return truth(expr);
+  if (expr is ExprFalsity<I>) return falsity(expr);
+  if (expr is ExprSelf<I>) return self(expr);
+  if (expr is ExprComposite<I>) return composite(expr);
+  if (expr is ExprExpected<I>) return expected(expr);
+  if (expr is ExprNegated<I>) return negated(expr);
+  if (expr is ExprNot<I>) return not(expr);
+  if (expr is ExprMinus<I>) return minus(expr);
+  if (expr is ExprPlus<I>) return plus(expr);
+  if (expr is ExprSlash<I>) return slash(expr);
+  if (expr is ExprStar<I>) return star(expr);
+  if (expr is ExprAnd<I>) return and(expr);
+  if (expr is ExprOr<I>) return or(expr);
+  if (expr is ExprG<I>) return g(expr);
+  if (expr is ExprGeq<I>) return geq(expr);
+  if (expr is ExprL<I>) return l(expr);
+  if (expr is ExprLeq<I>) return leq(expr);
+  if (expr is ExprPow<I>) return pow(expr);
+  if (expr is ExprModulo<I>) return modulo(expr);
+  if (expr is ExprNeq<I>) return neq(expr);
+  if (expr is ExprEq<I>) return eq(expr);
   throw Exception("Invalid State");
 }
 // endregion

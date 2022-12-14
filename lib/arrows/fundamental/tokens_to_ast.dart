@@ -5,23 +5,24 @@ import '../../domains/errors.dart';
 import '../../domains/tokens.dart';
 
 // region public
-MapEntry<CompilationUnit, int> tokens_to_ast({
-  required final List<Token> tokens,
+MapEntry<CompilationUnit<int>, int> tokens_to_ast({
+  required final List<Token<TokenAug>> tokens,
   required final Debug debug,
 }) {
   // region caretaking
-  Token? current;
-  Token? previous;
+  Token<TokenAug>? current;
+  Token<TokenAug>? previous;
   int previous_line() {
-    return previous!.loc.line;
+    return previous!.aug.line;
   }
+
   int current_idx = 0;
   void advance() {
     previous = current;
     while (current_idx < tokens.length) {
       current = tokens[current_idx++];
       if (current!.type == TokenType.ERROR) {
-        debug.error_at(current!, current!.lexeme);
+        debug.error_at(current!, current!.aug.lexeme);
       } else if (current!.type != TokenType.COMMENT) {
         break;
       }
@@ -48,8 +49,8 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
   // endregion
 
   // region actual
-  Declaration parse_declaration() {
-    Declaration parse_decl() {
+  Declaration<int> parse_declaration() {
+    Declaration<int> parse_decl() {
       void consume(
         final TokenType type,
         final String message,
@@ -61,10 +62,10 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
         }
       }
 
-      Expr parse_expression() {
+      Expr<int> parse_expression() {
         final self = parse_expression;
-        List<Expr> parse_argument_list() {
-          final args = <Expr>[];
+        List<Expr<int>> parse_argument_list() {
+          final args = <Expr<int>>[];
           if (!check(TokenType.RIGHT_PAREN)) {
             do {
               args.add(self());
@@ -77,12 +78,12 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
           return args;
         }
 
-        Expr parse_precedence(
+        Expr<int> parse_precedence(
           final _DloxPrecedence precedence,
         ) {
           final can_assign = precedence.index <= _DloxPrecedence.ASSIGNMENT.index;
           advance();
-          final Expr? prefix_rule = () {
+          final Expr<int>? prefix_rule = () {
             switch (previous!.type) {
               case TokenType.LEFT_PAREN:
                 final expr = self();
@@ -91,53 +92,53 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
               case TokenType.STRING:
                 return ExprString(
                   token: previous!,
-                  line: previous_line(),
+                  aug: previous_line(),
                 );
               case TokenType.NUMBER:
                 return ExprNumber(
                   value: previous!,
-                  line: previous_line(),
+                  aug: previous_line(),
                 );
               case TokenType.OBJECT:
                 return ExprObject(
                   token: previous!,
-                  line: previous_line(),
+                  aug: previous_line(),
                 );
               case TokenType.THIS:
                 return ExprSelf(
                   previous: previous!,
-                  line: previous_line(),
+                  aug: previous_line(),
                 );
               case TokenType.FALSE:
                 return ExprFalsity(
-                  line: previous_line(),
+                  aug: previous_line(),
                 );
               case TokenType.NIL:
                 return ExprNil(
-                  line: previous_line(),
+                  aug: previous_line(),
                 );
               case TokenType.TRUE:
                 return ExprTruth(
-                  line: previous_line(),
+                  aug: previous_line(),
                 );
               case TokenType.MINUS:
-                return ExprNegated(
+                return ExprNegated<int>(
                   child: parse_precedence(_DloxPrecedence.UNARY),
-                  line: previous_line(),
+                  aug: previous_line(),
                 );
               case TokenType.BANG:
                 return ExprNot(
                   child: parse_precedence(_DloxPrecedence.UNARY),
-                  line: previous_line(),
+                  aug: previous_line(),
                 );
               case TokenType.IDENTIFIER:
                 final name = previous!;
                 if (can_assign) {
                   if (match(TokenType.EQUAL)) {
-                    return ExprSet2(
+                    return ExprSet2<int>(
                       name: name,
                       arg: self(),
-                      line: previous_line(),
+                      aug: previous_line(),
                     );
                   } else {
                     return ExprGetSet2(
@@ -196,18 +197,18 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
                           return null;
                         }
                       }(),
-                      line: previous_line(),
+                      aug: previous_line(),
                     );
                   }
                 } else {
                   return ExprGetSet2(
                     name: name,
                     child: null,
-                    line: previous_line(),
+                    aug: previous_line(),
                   );
                 }
               case TokenType.LEFT_BRACE:
-                final entries = <MapEntry<Expr, Expr>>[];
+                final entries = <MapEntry<Expr<int>, Expr<int>>>[];
                 if (!check(TokenType.RIGHT_BRACE)) {
                   for (;;) {
                     final key = self();
@@ -227,13 +228,13 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
                   }
                 }
                 consume(TokenType.RIGHT_BRACE, "Expect '}' after map initializer");
-                return ExprMap(
+                return ExprMap<int>(
                   entries: entries,
-                  line: previous_line(),
+                  aug: previous_line(),
                 );
               case TokenType.LEFT_BRACK:
                 int val_count = 0;
-                final values = <Expr>[];
+                final values = <Expr<int>>[];
                 if (!check(TokenType.RIGHT_BRACK)) {
                   values.add(self());
                   val_count += 1;
@@ -248,10 +249,10 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
                   }
                 }
                 consume(TokenType.RIGHT_BRACK, "Expect ']' after list initializer");
-                return ExprList(
+                return ExprList<int>(
                   values: values,
                   val_count: val_count,
-                  line: previous_line(),
+                  aug: previous_line(),
                 );
               case TokenType.SUPER:
                 consume(TokenType.DOT, "Expect '.' after 'super'");
@@ -265,7 +266,7 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
                       return null;
                     }
                   }(),
-                  line: previous_line(),
+                  aug: previous_line(),
                 );
               default:
                 return null;
@@ -277,7 +278,7 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
           } else {
             return ExprComposite(
               exprs: () {
-                final exprs = <Expr>[
+                final exprs = <Expr<int>>[
                   prefix_rule,
                 ];
                 while (precedence.index <= _get_precedence(current!.type).index) {
@@ -314,7 +315,7 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
                                   return expr;
                                 }
                               }(),
-                              line: previous_line(),
+                              aug: previous_line(),
                             );
                           } else {
                             return ExprListSetter(
@@ -328,13 +329,13 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
                                   return null;
                                 }
                               }(),
-                              line: previous_line(),
+                              aug: previous_line(),
                             );
                           }
                         case TokenType.LEFT_PAREN:
                           return ExprCall(
                             args: parse_argument_list(),
-                            line: previous_line(),
+                            aug: previous_line(),
                           );
                         case TokenType.DOT:
                           consume(TokenType.IDENTIFIER, "Expect property name after '.'");
@@ -343,79 +344,79 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
                             return ExprSet(
                               name: name_token,
                               arg: self(),
-                              line: previous_line(),
+                              aug: previous_line(),
                             );
                           } else if (match(TokenType.LEFT_PAREN)) {
                             return ExprInvoke(
                               name: name_token,
                               args: parse_argument_list(),
-                              line: previous_line(),
+                              aug: previous_line(),
                             );
                           } else {
                             return ExprGet(
                               name: name_token,
-                              line: previous_line(),
+                              aug: previous_line(),
                             );
                           }
                         case TokenType.MINUS:
                           return ExprMinus(
                             child: parse_precedence(_get_next_precedence(TokenType.MINUS)),
-                            line: previous_line(),
+                            aug: previous_line(),
                           );
                         case TokenType.PLUS:
                           return ExprPlus(
                             child: parse_precedence(_get_next_precedence(TokenType.PLUS)),
-                            line: previous_line(),
+                            aug: previous_line(),
                           );
                         case TokenType.SLASH:
                           return ExprSlash(
                             child: parse_precedence(_get_next_precedence(TokenType.SLASH)),
-                            line: previous_line(),
+                            aug: previous_line(),
                           );
                         case TokenType.STAR:
                           return ExprStar(
                             child: parse_precedence(_get_next_precedence(TokenType.STAR)),
-                            line: previous_line(),
+                            aug: previous_line(),
                           );
                         case TokenType.CARET:
                           return ExprPow(
                             child: parse_precedence(_get_next_precedence(TokenType.CARET)),
-                            line: previous_line(),
+                            aug: previous_line(),
                           );
                         case TokenType.PERCENT:
                           return ExprModulo(
                             child: parse_precedence(_get_next_precedence(TokenType.PERCENT)),
-                            line: previous_line(),
+                            aug: previous_line(),
                           );
                         case TokenType.BANG_EQUAL:
                           return ExprNeq(
                             child: parse_precedence(_get_next_precedence(TokenType.BANG_EQUAL)),
-                            line: previous_line(),
+                            aug: previous_line(),
                           );
                         case TokenType.EQUAL_EQUAL:
                           return ExprEq(
                             child: parse_precedence(_get_next_precedence(TokenType.EQUAL_EQUAL)),
-                            line: previous_line(),
+                            aug: previous_line(),
                           );
                         case TokenType.GREATER:
                           return ExprG(
                             child: parse_precedence(_get_next_precedence(TokenType.GREATER)),
-                            line: previous_line(),
+                            aug: previous_line(),
                           );
                         case TokenType.GREATER_EQUAL:
                           return ExprGeq(
                             child: parse_precedence(_get_next_precedence(TokenType.GREATER_EQUAL)),
-                            line: previous_line(),
+                            aug: previous_line(),
                           );
                         case TokenType.LESS:
                           return ExprL(
                             child: parse_precedence(_get_next_precedence(TokenType.LESS)),
-                            line: previous_line(),
+                            aug: previous_line(),
                           );
                         case TokenType.LESS_EQUAL:
                           return ExprLeq(
                             child: parse_precedence(_get_next_precedence(TokenType.LESS_EQUAL)),
-                            line: previous_line(),
+                            aug: previous_line(),
                           );
                         case TokenType.AND:
                           return ExprAnd(
@@ -423,7 +424,7 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
                             child: parse_precedence(
                               _get_precedence(TokenType.AND),
                             ),
-                            line: previous_line(),
+                            aug: previous_line(),
                           );
                         case TokenType.OR:
                           return ExprOr(
@@ -433,7 +434,7 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
                                 TokenType.OR,
                               ),
                             ),
-                            line: previous_line(),
+                            aug: previous_line(),
                           );
                         default:
                           throw Exception("Invalid State");
@@ -455,7 +456,7 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
         return parse_precedence(_DloxPrecedence.ASSIGNMENT);
       }
 
-      DeclarationVari parse_var_declaration() {
+      DeclarationVari<int> parse_var_declaration() {
         return DeclarationVari(
           exprs: () {
             final exprs = () sync* {
@@ -468,7 +469,7 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
                       return parse_expression();
                     } else {
                       return ExprNil(
-                        line: previous_line(),
+                        aug: previous_line(),
                       );
                     }
                   }(),
@@ -484,11 +485,11 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
             consume(TokenType.SEMICOLON, 'Expect a newline after variable declaration');
             return exprs;
           }(),
-          line: previous_line(),
+          aug: previous_line(),
         );
       }
 
-      Iterable<Declaration> parse_decls() sync* {
+      Iterable<Declaration<int>> parse_decls() sync* {
         for (;;) {
           if (!check(TokenType.RIGHT_BRACE)) {
             if (match(TokenType.EOF)) {
@@ -503,15 +504,15 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
         consume(TokenType.RIGHT_BRACE, 'Unterminated block');
       }
 
-      Functiony parse_function_block() {
+      Functiony<int> parse_function_block() {
         return Functiony(
           name: () {
-            final name = previous!.lexeme;
+            final name = previous!.aug.lexeme;
             consume(TokenType.LEFT_PAREN, "Expect '(' after function name");
             return name;
           }(),
           args: () {
-            final args = <Token>[];
+            final args = <Token<TokenAug>>[];
             if (!check(TokenType.RIGHT_PAREN)) {
               argloop:
               for (;;) {
@@ -532,7 +533,7 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
         );
       }
 
-      Stmt parse_statement() {
+      Stmt<int> parse_statement() {
         if (match(TokenType.FOR)) {
           if (match(TokenType.LEFT_PAREN)) {
             return StmtLoop(
@@ -573,7 +574,7 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
               }(),
               end_kw: previous!,
               body: parse_statement(),
-              line: previous_line(),
+              aug: previous_line(),
             );
           } else {
             final key_name = () {
@@ -595,7 +596,7 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
               center: parse_expression(),
               exit_token: previous!,
               body: parse_statement(),
-              line: previous_line(),
+              aug: previous_line(),
             );
           }
         } else if (match(TokenType.IF)) {
@@ -608,7 +609,7 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
             expr: expr,
             stmt: stmt,
             if_kw: if_kw,
-            line: line,
+            aug: line,
             else_kw: else_kw,
             other: () {
               if (match(TokenType.ELSE)) {
@@ -623,12 +624,12 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
             expr: parse_expression(),
             stmt: parse_statement(),
             exit_kw: previous!,
-            line: previous_line(),
+            aug: previous_line(),
           );
         } else if (match(TokenType.LEFT_BRACE)) {
           return StmtBlock(
             block: parse_decls().toList(),
-            line: previous_line(),
+            aug: previous_line(),
           );
         } else if (match(TokenType.PRINT)) {
           return StmtOutput(
@@ -637,7 +638,7 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
               consume(TokenType.SEMICOLON, 'Expect a newline after value');
               return expr;
             }(),
-            line: previous_line(),
+            aug: previous_line(),
           );
         } else if (match(TokenType.RETURN)) {
           return StmtRet(
@@ -651,7 +652,7 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
                 return expr;
               }
             }(),
-            line: previous_line(),
+            aug: previous_line(),
           );
         } else {
           return StmtExpr(
@@ -660,7 +661,7 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
               consume(TokenType.SEMICOLON, 'Expect a newline after expression');
               return expr;
             }(),
-            line: previous_line(),
+            aug: previous_line(),
           );
         }
       }
@@ -679,7 +680,7 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
           }(),
           functions: () {
             consume(TokenType.LEFT_BRACE, 'Expect class body');
-            final methods = <Method>[];
+            final methods = <Method<int>>[];
             for (;;) {
               if (check(TokenType.RIGHT_BRACE)) {
                 break;
@@ -689,10 +690,10 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
                 consume(TokenType.IDENTIFIER, 'Expect method name');
                 final name = previous!;
                 final functiony = parse_function_block();
-                final method = Method(
+                final method = Method<int>(
                   name: name,
                   block: functiony,
-                  line: previous_line(),
+                  aug: previous_line(),
                 );
                 methods.add(method);
               }
@@ -700,14 +701,14 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
             consume(TokenType.RIGHT_BRACE, 'Unterminated class body');
             return methods;
           }(),
-          line: previous_line(),
+          aug: previous_line(),
         );
       } else if (match(TokenType.FUN)) {
         consume(TokenType.IDENTIFIER, 'Expect function name');
         return DeclarationFun(
           name: previous!,
           block: parse_function_block(),
-          line: previous_line(),
+          aug: previous_line(),
         );
       } else if (match(TokenType.VAR)) {
         return parse_var_declaration();
@@ -751,21 +752,15 @@ MapEntry<CompilationUnit, int> tokens_to_ast({
   }
 
   return MapEntry(
-    CompilationUnit(
-      decls: () sync* {
-        for (;;) {
-          if (match(TokenType.EOF)) {
-            break;
-          } else {
-            yield parse_declaration();
-          }
-        }
-      }()
-          .toList(),
+    CompilationUnit<int>(
+      decls: [
+        for (;!match(TokenType.EOF);)
+          parse_declaration(),
+      ],
     ),
     previous_line(),
   );
-// endregion
+  // endregion
 }
 // endregion
 

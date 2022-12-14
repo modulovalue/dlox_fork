@@ -16,7 +16,7 @@ abstract class LangError {
 }
 
 class CompilerError implements LangError {
-  final Token token;
+  final Token<TokenAug> token;
   @override
   final String msg;
 
@@ -26,7 +26,7 @@ class CompilerError implements LangError {
   });
 
   @override
-  int get line => token.loc.line;
+  int get line => token.aug.line;
 
   @override
   R match<R>({
@@ -79,20 +79,20 @@ class Debug {
     final LangError err,
   ) {
     String describe_error(
-      final Token? token,
+      final Token<TokenAug>? token,
       final String type,
       final String? msg,
       final int line,
     ) {
       final buf = StringBuffer();
       if (token != null) {
-        buf.write('[${token.loc.line + 1}] ${type} error');
+        buf.write('[${token.aug.line + 1}] ${type} error');
         if (token.type == TokenType.EOF) {
           buf.write(' at end');
         } else if (token.type == TokenType.ERROR) {
           // Nothing.
         } else {
-          buf.write(' at \'${token.lexeme}\'');
+          buf.write(' at \'${token.aug.lexeme}\'');
         }
       } else {
         buf.write('[${line}] ${type} error');
@@ -121,7 +121,7 @@ class Debug {
   }
 
   void error_at(
-    final Token token,
+    final Token<TokenAug> token,
     final String message,
   ) {
     if (panic_mode) {
