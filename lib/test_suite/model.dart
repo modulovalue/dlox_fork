@@ -11,7 +11,7 @@ mixin DloxDatasetInternal implements DloxDataset {
   @override
   String get name;
 
-  List<DloxDataset> get children;
+  List<DloxDatasetLeaf> get children;
 
   @override
   Z match<Z>({

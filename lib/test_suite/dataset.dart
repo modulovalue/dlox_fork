@@ -1,14 +1,12 @@
 import 'model.dart';
 
+// TODO • langcc has other examples that would fail to parse.
+// TODO   include them once I can do automatic error recovery?
 // region all
-class DloxDatasetAll with DloxDatasetInternal {
+class DloxDatasetAll {
   const DloxDatasetAll();
 
-  @override
-  String get name => "all";
-
-  @override
-  List<DloxDataset> get children {
+  List<DloxDatasetInternal> get children {
     return const [
       set_assignment,
       set_block,
@@ -78,7 +76,7 @@ class _DloxDataset_closure with DloxDatasetInternal {
   String get name => "closure";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "reuse_closure_slot",
           source: r"""
@@ -359,7 +357,7 @@ class _DloxDataset_misc with DloxDatasetInternal {
   String get name => "misc";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "empty_file",
           source: r"""
@@ -418,7 +416,7 @@ class _DloxDataset_comments with DloxDatasetInternal {
   String get name => "comments";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "line_at_eof",
           source: r"""
@@ -460,7 +458,7 @@ class _DloxDataset_variable with DloxDatasetInternal {
   String get name => "variable";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "in_nested_block",
           source: r"""
@@ -681,7 +679,7 @@ class _DloxDataset_nil with DloxDatasetInternal {
   String get name => "nil";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "literal",
           source: r"""
@@ -698,7 +696,7 @@ class _DloxDataset_if with DloxDatasetInternal {
   String get name => "if";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "var_in_then",
           source: r"""
@@ -797,7 +795,7 @@ class _DloxDataset_assignment with DloxDatasetInternal {
   String get name => "assignment";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "grouping",
           source: r"""
@@ -900,7 +898,7 @@ class _DloxDataset_return with DloxDatasetInternal {
   String get name => "return";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "after_if",
           source: r"""
@@ -976,7 +974,7 @@ class _DloxDataset_function with DloxDatasetInternal {
   String get name => "function";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "local_mutual_recursion",
           source: r"""
@@ -1650,7 +1648,7 @@ class _DloxDataset_field with DloxDatasetInternal {
   String get name => "field";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "set_on_nil",
           source: r"""
@@ -2043,7 +2041,7 @@ class _DloxDataset_print with DloxDatasetInternal {
   String get name => "print";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "missing_argument",
           source: r"""
@@ -2061,7 +2059,7 @@ class _DloxDataset_number with DloxDatasetInternal {
   String get name => "number";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "decimal_point_at_eof",
           source: r"""
@@ -2117,7 +2115,7 @@ class _DloxDataset_call with DloxDatasetInternal {
   String get name => "call";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "nil",
           source: r"""
@@ -2161,7 +2159,7 @@ class _DloxDataset_logical_operator with DloxDatasetInternal {
   String get name => "logical_operator";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "and",
           source: r"""
@@ -2246,7 +2244,7 @@ class _DloxDataset_inheritance with DloxDatasetInternal {
   String get name => "inheritance";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "inherit_from_nil",
           source: r"""
@@ -2369,7 +2367,7 @@ class _DloxDataset_super with DloxDatasetInternal {
   String get name => "super";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "no_superclass_method",
           source: r"""
@@ -2746,7 +2744,7 @@ class _DloxDataset_bool with DloxDatasetInternal {
   String get name => "bool";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "equality",
           source: r"""
@@ -2793,7 +2791,7 @@ class _DloxDataset_for with DloxDatasetInternal {
   String get name => "for";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "return_closure",
           source: r"""
@@ -2988,7 +2986,7 @@ class _DloxDataset_class with DloxDatasetInternal {
   String get name => "class";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "empty",
           source: r"""
@@ -3087,7 +3085,7 @@ class _DloxDataset_this with DloxDatasetInternal {
   String get name => "this";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "this_in_method",
           source: r"""
@@ -3190,7 +3188,7 @@ class _DloxDataset_string with DloxDatasetInternal {
   String get name => "string";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "error_after_multiline",
           source: r"""
@@ -3234,7 +3232,7 @@ class _DloxDataset_regression with DloxDatasetInternal {
   String get name => "regression";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "40",
           source: r"""
@@ -3282,7 +3280,7 @@ class _DloxDataset_while with DloxDatasetInternal {
   String get name => "while";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "return_closure",
           source: r"""
@@ -3393,7 +3391,7 @@ class _DloxDataset_method with DloxDatasetInternal {
   String get name => "method";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "empty_block",
           source: r"""
@@ -4023,7 +4021,7 @@ class _DloxDataset_operator with DloxDatasetInternal {
   String get name => "operator";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "add_num_nil",
           source: r"""
@@ -4314,7 +4312,7 @@ class _DloxDataset_constructor with DloxDatasetInternal {
   String get name => "constructor";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "call_init_explicitly",
           source: r"""
@@ -4473,7 +4471,7 @@ class _DloxDataset_block with DloxDatasetInternal {
   String get name => "block";
 
   @override
-  List<DloxDataset> get children => const [
+  List<DloxDatasetLeaf> get children => const [
         DloxDatasetLeafImpl(
           name: "empty",
           source: r"""

@@ -5,6 +5,7 @@ import '../../domains/errors.dart';
 import '../../domains/tokens.dart';
 
 // region public
+// TODO See: https://craftinginterpreters.com/appendix-i.html how close does the grammar there match dlox?
 MapEntry<CompilationUnit<int>, int> tokens_to_ast({
   required final List<Token<TokenAug>> tokens,
   required final Debug debug,
@@ -480,8 +481,7 @@ MapEntry<CompilationUnit<int>, int> tokens_to_ast({
                   break;
                 }
               }
-            }()
-                .toList();
+            }().toList();
             consume(TokenType.SEMICOLON, 'Expect a newline after variable declaration');
             return exprs;
           }(),

@@ -70,7 +70,7 @@ packages:
       name: extra_pedantic
       url: "https://pub.dartlang.org"
     source: hosted
-    version: "2.0.0"
+    version: "3.0.0"
   file:
     dependency: transitive
     description:
@@ -331,4 +331,4 @@ packages:
     source: hosted
     version: "3.1.1"
 sdks:
-  dart: ">=2.15.0-0 <3.0.0"
+  dart: ">=2.16.0 <3.0.0"
