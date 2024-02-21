@@ -429,7 +429,7 @@ class DloxHeap {
     return _constants[constant];
   }
 
-  Iterable<Object?> get all_constants {
+  List<Object?> get all_constants {
     return _constants;
   }
 }

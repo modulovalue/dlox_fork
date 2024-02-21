@@ -5,7 +5,7 @@ import '../../domains/tokens.dart';
 
 DloxFunction ast_to_objfunction({
   required final Debug debug,
-  required final CompilationUnit<int> compilation_unit,
+  required final CompilationUnit compilation_unit,
   required final int last_line,
   required final bool trace_bytecode,
 }) {
@@ -266,18 +266,18 @@ mixin _DloxCompilerMixin implements _Compiler {
 
   DloxFunction _ast_to_objfunction({
     required final Debug debug,
-    required final List<Declaration<int>> compilation_unit,
+    required final List<Declaration> compilation_unit,
     required final int last_line,
     required final bool trace_bytecode,
   }) {
     // region run
     void compile_declaration(
-      final Declaration<int> decl,
+      final Declaration decl,
     ) {
       void visit_fn(
         final bool is_initializer,
         final bool is_function,
-        final Functiony<int> block,
+        final Functiony block,
         final int line,
       ) {
         final function = DloxFunction(
@@ -342,7 +342,7 @@ mixin _DloxCompilerMixin implements _Compiler {
       }
 
       void compile_expr(
-        final Expr<int> expr,
+        final Expr expr,
       ) {
         final self = compile_expr;
         match_expr<void, int>(
@@ -590,7 +590,7 @@ mixin _DloxCompilerMixin implements _Compiler {
       }
 
       void compile_vari(
-        final DeclarationVari<int> a,
+        final DeclarationVari a,
       ) {
         for (final x in a.exprs) {
           final global = this.make_variable(x.key);
@@ -618,7 +618,7 @@ mixin _DloxCompilerMixin implements _Compiler {
       }
 
       void compile_stmt(
-        final Stmt<int> stmt,
+        final Stmt stmt,
       ) {
         stmt.match(
           output: (final a) {

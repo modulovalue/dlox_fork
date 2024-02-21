@@ -4,7 +4,7 @@ import '../domains/ast.dart' show CompilationUnit;
 import '../domains/errors.dart' show Debug;
 import '../domains/tokens.dart' show Token, TokenAug;
 import 'dataset.dart' show DloxDatasetAll;
-import 'model.dart' show DloxDatasetInternal, DloxDatasetLeafImpl;
+import 'model.dart' show DloxDatasetLeafImpl;
 
 // TODO have fixtures for the lexer in the style of esprima.
 abstract class DLoxTestSuite {
@@ -24,7 +24,7 @@ abstract class DLoxTestSuite {
         x.name,
         () {
             // Skip file.
-            for (final y in (x as DloxDatasetInternal).children) {
+            for (final y in x.children) {
               final file = y as DloxDatasetLeafImpl;
               const tab = "  ";
               wrapper.run_group(
@@ -169,7 +169,7 @@ abstract class DLoxTestSuite {
 
 class DLoxTestSuiteDependencies {
   final List<Token<TokenAug>> Function(String) code_to_tokens;
-  final MapEntry<CompilationUnit<int>, int> Function(
+  final MapEntry<CompilationUnit, int> Function(
     List<Token<TokenAug>> tokens,
     Debug debug,
   ) tokens_to_ast;

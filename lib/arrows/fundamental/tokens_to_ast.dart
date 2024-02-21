@@ -6,7 +6,7 @@ import '../../domains/tokens.dart';
 
 // region public
 // TODO See: https://craftinginterpreters.com/appendix-i.html how close does the grammar there match dlox?
-MapEntry<CompilationUnit<int>, int> tokens_to_ast({
+MapEntry<CompilationUnit, int> tokens_to_ast({
   required final List<Token<TokenAug>> tokens,
   required final Debug debug,
 }) {
@@ -50,8 +50,8 @@ MapEntry<CompilationUnit<int>, int> tokens_to_ast({
   // endregion
 
   // region actual
-  Declaration<int> parse_declaration() {
-    Declaration<int> parse_decl() {
+  Declaration parse_declaration() {
+    Declaration parse_decl() {
       void consume(
         final TokenType type,
         final String message,
@@ -63,10 +63,10 @@ MapEntry<CompilationUnit<int>, int> tokens_to_ast({
         }
       }
 
-      Expr<int> parse_expression() {
+      Expr parse_expression() {
         final self = parse_expression;
-        List<Expr<int>> parse_argument_list() {
-          final args = <Expr<int>>[];
+        List<Expr> parse_argument_list() {
+          final args = <Expr>[];
           if (!check(TokenType.RIGHT_PAREN)) {
             do {
               args.add(self());
@@ -79,12 +79,12 @@ MapEntry<CompilationUnit<int>, int> tokens_to_ast({
           return args;
         }
 
-        Expr<int> parse_precedence(
+        Expr parse_precedence(
           final _DloxPrecedence precedence,
         ) {
           final can_assign = precedence.index <= _DloxPrecedence.ASSIGNMENT.index;
           advance();
-          final Expr<int>? prefix_rule = () {
+          final Expr? prefix_rule = () {
             switch (previous!.type) {
               case TokenType.LEFT_PAREN:
                 final expr = self();
@@ -123,7 +123,7 @@ MapEntry<CompilationUnit<int>, int> tokens_to_ast({
                   aug: previous_line(),
                 );
               case TokenType.MINUS:
-                return ExprNegated<int>(
+                return ExprNegated(
                   child: parse_precedence(_DloxPrecedence.UNARY),
                   aug: previous_line(),
                 );
@@ -136,7 +136,7 @@ MapEntry<CompilationUnit<int>, int> tokens_to_ast({
                 final name = previous!;
                 if (can_assign) {
                   if (match(TokenType.EQUAL)) {
-                    return ExprSet2<int>(
+                    return ExprSet2(
                       name: name,
                       arg: self(),
                       aug: previous_line(),
@@ -209,7 +209,7 @@ MapEntry<CompilationUnit<int>, int> tokens_to_ast({
                   );
                 }
               case TokenType.LEFT_BRACE:
-                final entries = <MapEntry<Expr<int>, Expr<int>>>[];
+                final entries = <MapEntry<Expr, Expr>>[];
                 if (!check(TokenType.RIGHT_BRACE)) {
                   for (;;) {
                     final key = self();
@@ -229,13 +229,13 @@ MapEntry<CompilationUnit<int>, int> tokens_to_ast({
                   }
                 }
                 consume(TokenType.RIGHT_BRACE, "Expect '}' after map initializer");
-                return ExprMap<int>(
+                return ExprMap(
                   entries: entries,
                   aug: previous_line(),
                 );
               case TokenType.LEFT_BRACK:
                 int val_count = 0;
-                final values = <Expr<int>>[];
+                final values = <Expr>[];
                 if (!check(TokenType.RIGHT_BRACK)) {
                   values.add(self());
                   val_count += 1;
@@ -250,7 +250,7 @@ MapEntry<CompilationUnit<int>, int> tokens_to_ast({
                   }
                 }
                 consume(TokenType.RIGHT_BRACK, "Expect ']' after list initializer");
-                return ExprList<int>(
+                return ExprList(
                   values: values,
                   val_count: val_count,
                   aug: previous_line(),
@@ -279,7 +279,7 @@ MapEntry<CompilationUnit<int>, int> tokens_to_ast({
           } else {
             return ExprComposite(
               exprs: () {
-                final exprs = <Expr<int>>[
+                final exprs = <Expr>[
                   prefix_rule,
                 ];
                 while (precedence.index <= _get_precedence(current!.type).index) {
@@ -457,23 +457,26 @@ MapEntry<CompilationUnit<int>, int> tokens_to_ast({
         return parse_precedence(_DloxPrecedence.ASSIGNMENT);
       }
 
-      DeclarationVari<int> parse_var_declaration() {
+      DeclarationVari parse_var_declaration() {
         return DeclarationVari(
           exprs: () {
-            final exprs = () sync* {
+            final exprs = () {
+              final exprs = <MapEntry<Token<TokenAug>, Expr>>[];
               for (;;) {
                 consume(TokenType.IDENTIFIER, 'Expect variable name');
-                yield MapEntry(
-                  previous!,
-                  () {
-                    if (match(TokenType.EQUAL)) {
-                      return parse_expression();
-                    } else {
-                      return ExprNil(
-                        aug: previous_line(),
-                      );
-                    }
-                  }(),
+                exprs.add(
+                  MapEntry(
+                    previous!,
+                    () {
+                      if (match(TokenType.EQUAL)) {
+                        return parse_expression();
+                      } else {
+                        return ExprNil(
+                          aug: previous_line(),
+                        );
+                      }
+                    }(),
+                  ),
                 );
                 if (match(TokenType.COMMA)) {
                   continue;
@@ -481,7 +484,8 @@ MapEntry<CompilationUnit<int>, int> tokens_to_ast({
                   break;
                 }
               }
-            }().toList();
+              return exprs;
+            }();
             consume(TokenType.SEMICOLON, 'Expect a newline after variable declaration');
             return exprs;
           }(),
@@ -489,22 +493,24 @@ MapEntry<CompilationUnit<int>, int> tokens_to_ast({
         );
       }
 
-      Iterable<Declaration<int>> parse_decls() sync* {
+      List<Declaration> parse_decls() {
+        final decls = <Declaration>[];
         for (;;) {
           if (!check(TokenType.RIGHT_BRACE)) {
             if (match(TokenType.EOF)) {
               break;
             } else {
-              yield parse_declaration();
+              decls.add(parse_declaration());
             }
           } else {
             break;
           }
         }
         consume(TokenType.RIGHT_BRACE, 'Unterminated block');
+        return decls;
       }
 
-      Functiony<int> parse_function_block() {
+      Functiony parse_function_block() {
         return Functiony(
           name: () {
             final name = previous!.aug.lexeme;
@@ -529,11 +535,11 @@ MapEntry<CompilationUnit<int>, int> tokens_to_ast({
             consume(TokenType.LEFT_BRACE, 'Expect function body');
             return args;
           }(),
-          decls: parse_decls().toList(),
+          decls: parse_decls(),
         );
       }
 
-      Stmt<int> parse_statement() {
+      Stmt parse_statement() {
         if (match(TokenType.FOR)) {
           if (match(TokenType.LEFT_PAREN)) {
             return StmtLoop(
@@ -628,7 +634,7 @@ MapEntry<CompilationUnit<int>, int> tokens_to_ast({
           );
         } else if (match(TokenType.LEFT_BRACE)) {
           return StmtBlock(
-            block: parse_decls().toList(),
+            block: parse_decls(),
             aug: previous_line(),
           );
         } else if (match(TokenType.PRINT)) {
@@ -680,7 +686,7 @@ MapEntry<CompilationUnit<int>, int> tokens_to_ast({
           }(),
           functions: () {
             consume(TokenType.LEFT_BRACE, 'Expect class body');
-            final methods = <Method<int>>[];
+            final methods = <Method>[];
             for (;;) {
               if (check(TokenType.RIGHT_BRACE)) {
                 break;
@@ -690,7 +696,7 @@ MapEntry<CompilationUnit<int>, int> tokens_to_ast({
                 consume(TokenType.IDENTIFIER, 'Expect method name');
                 final name = previous!;
                 final functiony = parse_function_block();
-                final method = Method<int>(
+                final method = Method(
                   name: name,
                   block: functiony,
                   aug: previous_line(),
@@ -752,7 +758,7 @@ MapEntry<CompilationUnit<int>, int> tokens_to_ast({
   }
 
   return MapEntry(
-    CompilationUnit<int>(
+    CompilationUnit(
       decls: [
         for (;!match(TokenType.EOF);)
           parse_declaration(),
